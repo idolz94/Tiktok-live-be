@@ -1,0 +1,29 @@
+### Health
+GET http://localhost:3001/health
+
+### Register
+POST http://localhost:3001/api/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "Minh Nguyen",
+  "phone": "0900000000",
+  "email": "0900000000@lumi.local",
+  "password": "123456",
+  "tiktokId": "shop_test",
+  "defaultTikTokUsername": "shop_test",
+  "shopName": "Minh Shop"
+}
+
+### Login
+POST http://localhost:3001/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "0900000000@lumi.local",
+  "password": "123456"
+}
+
+### Bootstrap
+GET http://localhost:3001/api/me/bootstrap
+Authorization: Bearer YOUR_ACCESS_TOKEN
