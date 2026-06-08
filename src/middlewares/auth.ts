@@ -12,9 +12,7 @@ function getBearerToken(request: Request) {
   const cookieToken = request.cookies?.[env.authCookieName];
   if (typeof cookieToken === "string" && cookieToken.trim()) return cookieToken.trim();
 
-  // EventSource cannot send custom Authorization headers. Allow token in query for SSE fallback.
-  const queryToken = request.query.accessToken || request.query.token;
-  return typeof queryToken === "string" ? queryToken.trim() : "";
+  return "";
 }
 
 export async function requireAuth(request: Request, _response: Response, next: NextFunction) {
