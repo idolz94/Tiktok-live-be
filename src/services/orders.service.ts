@@ -140,17 +140,16 @@ export async function createOrderFromComment({
 
   if (orderItemError) throw new Error(orderItemError.message);
 
-  await Promise.all([
+  void Promise.all([
     updateLiveCommentOrder({ commentId: liveCommentId, orderId: order.id }),
     updateLiveSessionOrderCount(dbLiveSessionId),
     updateCustomerAfterOrder({ customerId: customer?.id || null, totalAmount }),
-  ]);
+  ]).catch((error) => {
+    console.error("CREATE_ORDER_FROM_COMMENT_SIDE_EFFECT_FAILED", error);
+  });
 
   return {
-    order,
-    orderItem,
-    customer,
-    uiOrder: { ...order, avatar_url: avatarUrl, products: [orderItem] },
+    order: { ...order, avatar_url: avatarUrl, products: [orderItem] },
   };
 }
 
