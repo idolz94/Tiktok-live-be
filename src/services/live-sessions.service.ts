@@ -109,17 +109,41 @@ export async function endLiveSession({
   }
 
   const now = new Date().toISOString();
+  const normalizedUsername = normalizeAtUsername(username);
 
-  const existed = await findLiveSessionByExternalId({
+  let existed = await findLiveSessionByExternalId({
     shopId,
     sessionId: externalSessionId,
   });
 
-  const finalStartedAt =
-    startedAt ||
-    existed?.started_at ||
-    endedAt ||
-    now;
+  if (!existed && isUuid(externalSessionId)) {
+    const { data, error } = await supabaseAdmin
+      .from("live_sessions")
+      .select("*")
+      .eq("shop_id", shopId)
+      .eq("id", externalSessionId)
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
+    existed = data;
+  }
+
+  if (!existed && normalizedUsername) {
+    const { data, error } = await supabaseAdmin
+      .from("live_sessions")
+      .select("*")
+      .eq("shop_id", shopId)
+      .eq("tiktok_username", normalizedUsername)
+      .eq("status", "running")
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw new Error(error.message);
+    existed = data;
+  }
+
+  const finalStartedAt = startedAt || existed?.started_at || now;
 
   const finalDurationSeconds =
     typeof durationSeconds === "number"
@@ -152,7 +176,7 @@ export async function endLiveSession({
     const { data, error } = await supabaseAdmin
       .from("live_sessions")
       .update({
-        tiktok_username: normalizeAtUsername(username),
+        tiktok_username: normalizedUsername,
         started_at: finalStartedAt,
         ended_at: endedAt,
         duration_seconds: finalDurationSeconds,
@@ -177,8 +201,8 @@ export async function endLiveSession({
     .insert({
       shop_id: shopId,
       created_by: userId,
-      external_session_id: externalSessionId,
-      tiktok_username: normalizeAtUsername(username),
+      external_session_id: existed?.external_session_id || externalSessionId,
+      tiktok_username: normalizedUsername,
       started_at: finalStartedAt,
       ended_at: endedAt,
       duration_seconds: finalDurationSeconds,
