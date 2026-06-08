@@ -348,6 +348,7 @@ export async function endRunningLiveSession({
   endedAt?: string | null;
 }) {
   const finalEndedAt = endedAt || nowIso();
+  const normalizedUsername = normalizeAtUsername(tiktokUsername);
 
   let query = supabaseAdmin
     .from("live_sessions")
@@ -358,19 +359,54 @@ export async function endRunningLiveSession({
     query = query.eq("id", liveSessionId);
   } else if (externalSessionId) {
     query = query.eq("external_session_id", externalSessionId);
-  } else if (tiktokUsername) {
+  } else if (normalizedUsername) {
     query = query
-      .eq("tiktok_username", tiktokUsername)
+      .eq("tiktok_username", normalizedUsername)
       .eq("status", "running")
       .order("started_at", { ascending: false })
       .limit(1);
   } else {
-    return null;
+    query = query
+      .eq("status", "running")
+      .order("started_at", { ascending: false })
+      .limit(1);
   }
 
   const { data: session, error: findError } = await query.maybeSingle();
 
   if (findError) throw new Error(findError.message);
+
+  if (!session && normalizedUsername && !liveSessionId && !externalSessionId) {
+    const { data: fallbackSession, error: fallbackError } = await supabaseAdmin
+      .from("live_sessions")
+      .select("*")
+      .eq("shop_id", shopId)
+      .eq("status", "running")
+      .order("started_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (fallbackError) throw new Error(fallbackError.message);
+    if (fallbackSession) {
+      const durationSeconds = calcDurationSeconds(fallbackSession.started_at, finalEndedAt);
+      const { data, error } = await supabaseAdmin
+        .from("live_sessions")
+        .update({
+          ended_at: finalEndedAt,
+          duration_seconds: durationSeconds,
+          end_reason: reason,
+          status: "ended",
+          updated_at: nowIso(),
+        })
+        .eq("id", fallbackSession.id)
+        .select("*")
+        .single();
+
+      if (error) throw new Error(error.message);
+      return data;
+    }
+  }
+
   if (!session) return null;
 
   const durationSeconds = calcDurationSeconds(session.started_at, finalEndedAt);
