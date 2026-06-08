@@ -118,7 +118,7 @@ export async function createOrderFromComment({
 
   if (orderError) throw new Error(orderError.message);
 
-  const { data: orderItem, error: orderItemError } = await supabaseAdmin
+  const { error: orderItemError } = await supabaseAdmin
     .from("order_items")
     .insert({
       order_id: order.id,
@@ -134,9 +134,7 @@ export async function createOrderFromComment({
       raw_comment_text: commentText,
       created_at: now,
       updated_at: now,
-    })
-    .select("*")
-    .single();
+    });
 
   if (orderItemError) throw new Error(orderItemError.message);
 
@@ -149,7 +147,10 @@ export async function createOrderFromComment({
   });
 
   return {
-    order: { ...order, avatar_url: avatarUrl, products: [orderItem] },
+    success: true,
+    message: "Tạo đơn thành công.",
+    orderId: order.id,
+    orderCode: order.order_code,
   };
 }
 
