@@ -134,7 +134,7 @@ router.post(
 
     response.cookie(env.authCookieName, loginData.session.access_token, {
       httpOnly: true,
-      sameSite: "lax",
+      sameSite: env.nodeEnv === "production" ? "none" : "lax",
       secure: env.nodeEnv === "production",
       maxAge: 1000 * 60 * 60 * 24 * 30,
     });
@@ -169,7 +169,7 @@ router.post(
 
     response.cookie(env.authCookieName, data.session.access_token, {
       httpOnly: true,
-      sameSite: "lax",
+      sameSite: env.nodeEnv === "production" ? "none" : "lax",
       secure: env.nodeEnv === "production",
       maxAge: 1000 * 60 * 60 * 24 * 30,
     });
