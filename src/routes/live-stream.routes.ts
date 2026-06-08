@@ -54,11 +54,20 @@ router.post(
   asyncHandler(async (request, response) => {
     const context = await requireUsableAccountContext(request);
     const body = usernameSchema.parse(request.body || {});
-    const collector = await startPythonCollector({
+
+    void startPythonCollector({
       username: body.username,
       shopId: context.shop.id,
+    }).catch((error) => {
+      console.error("START_PYTHON_COLLECTOR_FAILED", error);
     });
-    return ok(response, { collector });
+
+    return ok(response, {
+      success: true,
+      message: "Đã gửi yêu cầu bắt đầu live stream.",
+      status: "starting",
+      username: body.username,
+    });
   }),
 );
 router.post(
