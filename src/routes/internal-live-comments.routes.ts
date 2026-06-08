@@ -5,32 +5,40 @@ import { enqueueLiveEvent } from "../lib/queues.js";
 import { ok } from "../lib/response.js";
 import { broadcastSseToShop } from "../lib/sse-hub.js";
 import { requireInternalApiKey } from "../middlewares/internal-api-key.js";
-import { ingestCollectorComment } from "../services/internal-live-ingest.service.js";
+import {
+  ensureCollectorLiveSession,
+  resolveShopForCollectorEvent,
+} from "../services/internal-live-ingest.service.js";
+import { saveLiveComment } from "../services/live-comments.service.js";
 
 const router = Router();
 
 const ingestCommentSchema = z.object({
-  eventId: z.string().min(1).optional(),
-  eventType: z.string().optional().default("COMMENT"),
-  source: z.string().optional().default("python-tiktok-collector"),
+  eventId: z.string().optional().nullable(),
+  eventType: z.string().optional().nullable(),
+  source: z.string().optional().nullable(),
 
   shopId: z.string().optional().nullable(),
   liveUsername: z.string().min(1, "Thiếu liveUsername."),
-  collectorSessionId: z.string().min(1, "Thiếu collectorSessionId."),
   liveSessionId: z.string().optional().nullable(),
+  collectorSessionId: z.string().min(1, "Thiếu collectorSessionId."),
 
-  externalCommentId: z.string().optional(),
-  dedupKey: z.string().optional(),
-  tiktokUsername: z.string().optional(),
-  displayName: z.string().optional(),
-  avatarUrl: z.string().optional(),
-  commentText: z.string().optional(),
-  rawText: z.string().optional(),
-  intent: z.string().optional().default("normal"),
-  priorityLevel: z.string().optional().default("normal"),
-  finalScore: z.number().optional().default(0),
-  isOrderCreated: z.boolean().optional().default(false),
-  createdAt: z.string().optional(),
+  externalCommentId: z.string().optional().nullable(),
+  dedupKey: z.string().optional().nullable(),
+
+  tiktokUsername: z.string().optional().nullable(),
+  displayName: z.string().optional().nullable(),
+  avatarUrl: z.string().optional().nullable(),
+  commentText: z.string().optional().nullable(),
+  rawText: z.string().optional().nullable(),
+
+  intent: z.string().optional().nullable(),
+  priorityLevel: z.string().optional().nullable(),
+  finalScore: z.number().optional().nullable(),
+  isOrderCreated: z.boolean().optional().nullable(),
+
+  createdAt: z.string().optional().nullable(),
+
   comment: z.any().optional(),
   rawPayload: z.any().optional(),
 });
@@ -42,66 +50,159 @@ router.post(
   asyncHandler(async (request, response) => {
     const body = ingestCommentSchema.parse(request.body || {});
     const createdAt = body.createdAt || new Date().toISOString();
-    const externalCommentId = body.externalCommentId || body.comment?.id || body.comment?.externalCommentId || body.eventId;
+
+    const shop = await resolveShopForCollectorEvent({
+      shopId: body.shopId,
+      liveUsername: body.liveUsername,
+    });
+
+    if (!shop?.id) {
+      throw new Error(`Không tìm thấy shop cho TikTok username ${body.liveUsername}.`);
+    }
+
+    const session = await ensureCollectorLiveSession({
+      shopId: shop.id,
+      liveUsername: body.liveUsername,
+      collectorSessionId: body.collectorSessionId,
+      startedAt: createdAt,
+    });
 
     const normalizedComment = {
       ...(body.comment || {}),
-      id: externalCommentId,
-      externalCommentId,
-      dedupKey: body.dedupKey || body.comment?.dedupKey || externalCommentId,
-      tiktokUsername: body.tiktokUsername || body.comment?.tiktokUsername,
-      displayName: body.displayName || body.comment?.displayName || body.comment?.username,
-      username: body.displayName || body.comment?.username || body.comment?.displayName,
-      avatarUrl: body.avatarUrl || body.comment?.avatarUrl,
-      comment: body.commentText || body.comment?.comment || body.comment?.text,
-      text: body.commentText || body.comment?.text || body.comment?.comment,
-      rawText: body.rawText || body.comment?.rawText,
-      tiktokLiveUsername: body.liveUsername,
-      intent: body.intent || body.comment?.intent || "normal",
-      priorityLevel: body.priorityLevel || body.comment?.priorityLevel || "normal",
-      finalScore: body.finalScore ?? body.comment?.finalScore ?? 0,
-      isOrderCreated: body.isOrderCreated ?? body.comment?.isOrderCreated ?? false,
+
+      id:
+        body.comment?.id ||
+        body.externalCommentId ||
+        body.eventId,
+
+      externalCommentId:
+        body.externalCommentId ||
+        body.comment?.externalCommentId ||
+        body.comment?.external_comment_id ||
+        body.comment?.id ||
+        body.eventId,
+
+      dedupKey:
+        body.dedupKey ||
+        body.comment?.dedupKey ||
+        body.eventId,
+
+      shopId: shop.id,
+      liveSessionId: session.id,
+
+      tiktokUsername:
+        body.tiktokUsername ||
+        body.comment?.tiktokUsername ||
+        body.comment?.tiktok_username,
+
+      displayName:
+        body.displayName ||
+        body.comment?.displayName ||
+        body.comment?.display_name ||
+        body.comment?.username,
+
+      avatarUrl:
+        body.avatarUrl ||
+        body.comment?.avatarUrl ||
+        body.comment?.avatar_url ||
+        body.comment?.avatar,
+
+      commentText:
+        body.commentText ||
+        body.comment?.commentText ||
+        body.comment?.comment_text ||
+        body.comment?.text ||
+        body.comment?.comment,
+
+      text:
+        body.commentText ||
+        body.comment?.text ||
+        body.comment?.commentText ||
+        body.comment?.comment,
+
+      rawText:
+        body.rawText ||
+        body.comment?.rawText ||
+        body.comment?.raw_text,
+
+      intent:
+        body.intent ||
+        body.comment?.intent ||
+        "normal",
+
+      priorityLevel:
+        body.priorityLevel ||
+        body.comment?.priorityLevel ||
+        body.comment?.priority_level ||
+        "normal",
+
+      finalScore:
+        body.finalScore ??
+        body.comment?.finalScore ??
+        body.comment?.final_score ??
+        0,
+
+      isOrderCreated:
+        body.isOrderCreated ??
+        body.comment?.isOrderCreated ??
+        body.comment?.is_order_created ??
+        false,
+
       createdAt,
-      rawPayload: body.rawPayload || body,
+      created_at: createdAt,
+
+      rawPayload: body.rawPayload || body.comment?.rawPayload || body,
     };
 
-    const result = await ingestCollectorComment({
-      shopId: body.shopId,
-      liveUsername: body.liveUsername,
-      collectorSessionId: body.collectorSessionId,
+    const comment = await saveLiveComment({
+      shopId: shop.id,
+      liveSessionId: session.id,
       comment: normalizedComment,
-      createdAt,
     });
 
-    const ssePayload = {
-      eventId: body.eventId || externalCommentId,
+    if (!comment) {
+      return ok(response, {
+        accepted: false,
+        ignored: true,
+        reason: "Comment rỗng hoặc thiếu externalCommentId/liveSessionId.",
+      });
+    }
+
+    const payload = {
+      eventId: body.eventId || body.dedupKey || comment.external_comment_id || comment.id,
       eventType: "COMMENT",
-      source: body.source,
-      shopId: result.shop.id,
-      liveSessionId: result.session.id,
-      live_session_id: result.session.id,
-      externalSessionId: result.session.external_session_id,
+      source: "node-live-ingest",
+
+      shopId: shop.id,
+
+      liveSessionId: session.id,
+      live_session_id: session.id,
+
+      externalSessionId: body.collectorSessionId,
       collectorSessionId: body.collectorSessionId,
+
       liveUsername: body.liveUsername,
-      comment: result.comment,
-      createdAt: new Date().toISOString(),
+
+      comment,
+
+      createdAt,
     };
 
-    const sseClientCount = broadcastSseToShop(result.shop.id, "COMMENT", ssePayload);
+    const sseClientCount = broadcastSseToShop(shop.id, "COMMENT", payload);
 
-    await enqueueLiveEvent("collector-comment-ingested", {
-      shopId: result.shop.id,
-      liveSessionId: result.session.id,
-      commentId: result.comment?.id,
-      externalCommentId,
+    await enqueueLiveEvent("comment-saved", {
+      shopId: shop.id,
+      liveSessionId: session.id,
+      commentId: comment.id,
+      externalCommentId: comment.external_comment_id,
+      sseClientCount,
     });
 
     return ok(response, {
       accepted: true,
       sseClientCount,
-      shopId: result.shop.id,
-      liveSessionId: result.session.id,
-      comment: result.comment,
+      session,
+      comment,
     });
   }),
 );
