@@ -1,3 +1,4 @@
+import type { NextFunction, Request, Response } from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express from "express";
@@ -27,6 +28,21 @@ function isAllowedOrigin(origin?: string) {
   return allowedOrigins.includes(origin);
 }
 
+function requireKnownClient(request: Request, response: Response, next: NextFunction) {
+  if (request.headers.origin || request.path.startsWith("/api/internal/")) {
+    next();
+    return;
+  }
+
+  const appKey = String(request.headers["x-app-key"] || "");
+  if (env.mobileAppKey && appKey === env.mobileAppKey) {
+    next();
+    return;
+  }
+
+  response.status(403).json({ ok: false, message: "Client không được phép gọi API." });
+}
+
 export function createApp() {
   const app = express();
 
@@ -42,6 +58,7 @@ export function createApp() {
   app.use(express.json({ limit: "2mb" }));
   app.use(cookieParser());
   app.use(morgan(env.nodeEnv === "production" ? "combined" : "dev"));
+  app.use(requireKnownClient);
 
   app.get("/health", (_request, response) => {
     response.json({ ok: true, service: "lumi-backend", time: new Date().toISOString() });

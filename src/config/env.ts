@@ -37,6 +37,9 @@ export const env = {
   // Internal channel: Python TikTok Collector -> Node.js Backend
   nodeInternalApiKey: readEnv("NODE_INTERNAL_API_KEY", "change_me"),
 
+  // Mobile app key: React Native gửi header x-app-key để được phép gọi API
+  mobileAppKey: readEnv("MOBILE_APP_KEY", ""),
+
   // Optional control channel: Node.js Backend -> Python TikTok Collector
   pythonCollectorBaseUrl: readEnv("PYTHON_COLLECTOR_BASE_URL", "http://localhost:8765"),
   collectorControlApiKey: readEnv("COLLECTOR_CONTROL_API_KEY", "change_me"),

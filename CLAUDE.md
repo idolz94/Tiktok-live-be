@@ -247,10 +247,10 @@ PYTHON_COLLECTOR_BASE_URL=https://python-collector-domain.com
 | Client | Auth method | Cookie |
 |---|---|---|
 | Next.js (browser) | cookie `lumi_access_token` | `credentials: "include"` |
-| React Native | `Authorization: Bearer <token>` | không dùng cookie |
+| React Native | `Authorization: Bearer <token>` + `x-app-key` | không dùng cookie |
 
 - `CLIENT_ORIGIN` chỉ cần liệt kê web origin (Next.js dev + production).
-- React Native gửi request không có `Origin` header → backend cho qua (CORS không chặn no-origin).
+- React Native gửi request không có `Origin` header → backend yêu cầu thêm header `x-app-key: MOBILE_APP_KEY`.
 - Sau login/register, FE Next.js dùng cookie tự động; React Native lưu `accessToken` từ response body và gửi vào header.
 
 ## CORS multi-origin
@@ -260,9 +260,11 @@ PYTHON_COLLECTOR_BASE_URL=https://python-collector-domain.com
 ```env
 # Local dev
 CLIENT_ORIGIN=http://localhost:3000,http://localhost:3001
+MOBILE_APP_KEY=dev_mobile_key
 
-# Production (Next.js web)
+# Production (Next.js web + React Native)
 CLIENT_ORIGIN=https://lumilive.vn,https://www.lumilive.vn
+MOBILE_APP_KEY=your_strong_mobile_app_key
 ```
 
 Để cho phép mọi origin (không khuyến nghị production):
