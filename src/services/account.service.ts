@@ -63,6 +63,25 @@ export async function getAccountContext(request: Request): Promise<AccountContex
   };
 }
 
+export async function requireShopId(request: Request): Promise<string> {
+  const user = request.authUser;
+  if (!user) throw unauthorized();
+
+  const { data, error } = await supabaseAdmin
+    .from("shop_members")
+    .select("shop_id")
+    .eq("user_id", user.id)
+    .eq("status", "active")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data?.shop_id) throw forbidden("Không tìm thấy shop.");
+
+  return data.shop_id;
+}
+
 export async function requireAccountContext(request: Request) {
   const context = await getAccountContext(request);
   if (!context.shop?.id) throw forbidden("Không tìm thấy shop.");

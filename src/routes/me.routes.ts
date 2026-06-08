@@ -3,7 +3,7 @@ import { z } from "zod";
 import { asyncHandler } from "../lib/async-handler.js";
 import { ok } from "../lib/response.js";
 import { requireAuth } from "../middlewares/auth.js";
-import { getAccountContext, requireAccountContext } from "../services/account.service.js";
+import { getAccountContext, requireShopId } from "../services/account.service.js";
 import {
   createTikTokChannel,
   deleteTikTokChannel,
@@ -54,8 +54,8 @@ router.get(
   "/tiktok-channels",
   requireAuth,
   asyncHandler(async (request, response) => {
-    const context = await requireAccountContext(request);
-    const channels = await listTikTokChannels(context.shop.id);
+    const shopId = await requireShopId(request);
+    const channels = await listTikTokChannels(shopId);
     return ok(response, { channels });
   }),
 );
@@ -65,10 +65,10 @@ router.post(
   "/tiktok-channels",
   requireAuth,
   asyncHandler(async (request, response) => {
-    const context = await requireAccountContext(request);
+    const shopId = await requireShopId(request);
     const body = createChannelSchema.parse(request.body || {});
     const channel = await createTikTokChannel({
-      shopId: context.shop.id,
+      shopId,
       tiktokUsername: body.tiktokUsername,
       displayName: body.displayName,
       isDefault: body.isDefault,
@@ -82,10 +82,10 @@ router.patch(
   "/tiktok-channels/:channelId",
   requireAuth,
   asyncHandler(async (request, response) => {
-    const context = await requireAccountContext(request);
+    const shopId = await requireShopId(request);
     const body = updateChannelSchema.parse(request.body || {});
     const channel = await updateTikTokChannel({
-      shopId: context.shop.id,
+      shopId,
       channelId: String(request.params.channelId),
       tiktokUsername: body.tiktokUsername,
       displayName: body.displayName,
@@ -100,9 +100,9 @@ router.delete(
   "/tiktok-channels/:channelId",
   requireAuth,
   asyncHandler(async (request, response) => {
-    const context = await requireAccountContext(request);
+    const shopId = await requireShopId(request);
     await deleteTikTokChannel({
-      shopId: context.shop.id,
+      shopId,
       channelId: String(request.params.channelId),
     });
     return ok(response, { success: true });
