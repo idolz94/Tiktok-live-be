@@ -10,7 +10,8 @@ export type SseEventName =
   | "LIVE_TIME_ENDED"
   | "COMMENT"
   | "COMMENT_SAVED"
-  | "MESSAGE";
+  | "MESSAGE"
+  | "COLLECTOR_STOPPED";
 
 type SseClient = {
   id: string;

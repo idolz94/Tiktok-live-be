@@ -11,3 +11,7 @@ export function calcDurationSeconds(startedAt?: string | null, endedAt?: string 
   if (!Number.isFinite(start) || !Number.isFinite(end)) return 0;
   return Math.max(0, Math.floor((end - start) / 1000));
 }
+
+export function nowIso() {
+  return new Date().toISOString();
+}

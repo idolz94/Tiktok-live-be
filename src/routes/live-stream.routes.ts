@@ -7,6 +7,7 @@ import { addSseClient, getSseStats } from "../lib/sse-hub.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { requireUsableAccountContext } from "../services/account.service.js";
 import { startPythonCollector, stopPythonCollector } from "../services/python-collector.service.js";
+import { endRunningLiveSession } from "../services/live-sessions.service.js";
 
 const router = Router();
 
@@ -60,18 +61,27 @@ router.post(
     return ok(response, { collector });
   }),
 );
-
 router.post(
   "/stop",
   requireAuth,
   asyncHandler(async (request, response) => {
     const context = await requireUsableAccountContext(request);
-    const body = usernameSchema.parse(request.body || {});
+    const username = String(request.body?.username || "").trim();
+
     const collector = await stopPythonCollector({
-      username: body.username,
-      shopId: context.shop.id,
+      username,
     });
-    return ok(response, { collector });
+
+    const session = await endRunningLiveSession({
+      shopId: context.shop.id,
+      tiktokUsername: username,
+      reason: "manual_stop",
+    });
+
+    return ok(response, {
+      collector,
+      session,
+    });
   }),
 );
 
