@@ -178,7 +178,7 @@ export async function updateOrderDepositStatus({
 }) {
   await assertOrderInShop(orderId, shopId);
 
-  const paymentStatus = depositStatus === "paid" || depositStatus === "deposited" ? "partial" : "unpaid";
+  const paymentStatus = depositStatus === "paid" ? "paid" : depositStatus === "deposited" ? "partial" : "unpaid";
   const { data, error } = await supabaseAdmin
     .from("orders")
     .update({ deposit_status: depositStatus, payment_status: paymentStatus, updated_at: new Date().toISOString() })
