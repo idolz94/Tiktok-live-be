@@ -11,7 +11,10 @@
     "start": "node dist/server.js",
     "start:worker": "node dist/workers/index.js",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint . --ext .ts"
+    "lint": "eslint . --ext .ts",
+    "gn:index": "gitnexus analyze --skip-agents-md",
+    "gn:index:force": "gitnexus analyze --force --skip-agents-md",
+    "gn:setup": "gitnexus setup"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",

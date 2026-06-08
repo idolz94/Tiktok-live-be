@@ -242,6 +242,35 @@ CLIENT_ORIGIN=https://lumilive.vn,https://www.lumilive.vn
 PYTHON_COLLECTOR_BASE_URL=https://python-collector-domain.com
 ```
 
+## Auth: Next.js vs React Native
+
+| Client | Auth method | Cookie |
+|---|---|---|
+| Next.js (browser) | cookie `lumi_access_token` | `credentials: "include"` |
+| React Native | `Authorization: Bearer <token>` | không dùng cookie |
+
+- `CLIENT_ORIGIN` chỉ cần liệt kê web origin (Next.js dev + production).
+- React Native gửi request không có `Origin` header → backend cho qua (CORS không chặn no-origin).
+- Sau login/register, FE Next.js dùng cookie tự động; React Native lưu `accessToken` từ response body và gửi vào header.
+
+## CORS multi-origin
+
+`CLIENT_ORIGIN` hỗ trợ nhiều domain phân cách bởi dấu phẩy:
+
+```env
+# Local dev
+CLIENT_ORIGIN=http://localhost:3000,http://localhost:3001
+
+# Production (Next.js web)
+CLIENT_ORIGIN=https://lumilive.vn,https://www.lumilive.vn
+```
+
+Để cho phép mọi origin (không khuyến nghị production):
+
+```env
+CLIENT_ORIGIN=*
+```
+
 ## Commands
 
 ```bash
@@ -264,3 +293,39 @@ Sau khi sửa:
 3. Ghi rõ file đã sửa.
 4. Ghi rõ SQL cần chạy nếu có.
 5. Ghi rõ cách test bằng curl hoặc client.
+
+
+
+
+---
+
+# GitNexus Rules
+
+Repo này dùng GitNexus để giảm context/token khi làm việc với Claude Code.
+
+## Mục tiêu
+
+- Giúp Claude Code hiểu cấu trúc repo trước khi đọc nhiều file.
+- Giảm việc grep/read toàn bộ codebase.
+- Ưu tiên tìm đúng file, đúng flow, đúng dependency trước khi sửa code.
+- Tránh việc Claude sửa nhầm file vì thiếu context.
+- Tránh nạp quá nhiều file vào context.
+
+## Quy tắc bắt buộc
+
+- Khi task yêu cầu hiểu flow lớn, phải dùng GitNexus trước khi đọc nhiều file.
+- Không đọc toàn bộ repo nếu GitNexus đã có index.
+- Không grep lan man qua nhiều thư mục nếu có thể hỏi GitNexus trước.
+- Không mở quá nhiều file cùng lúc.
+- Chỉ đọc những file GitNexus hoặc architect-agent xác định là liên quan.
+- Sau khi refactor lớn, đổi nhiều function, đổi route, đổi service, phải re-index GitNexus.
+- Sau khi git pull hoặc merge branch lớn, phải re-index GitNexus.
+- Không để GitNexus tự ghi đè `CLAUDE.md`.
+- Luôn chạy GitNexus với `--skip-agents-md` hoặc dùng `.gitnexusrc` có `skipContextFiles: true`.
+
+## Commands
+
+Index repo:
+
+```bash
+gitnexus analyze --skip-agents-md

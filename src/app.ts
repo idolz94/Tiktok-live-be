@@ -16,13 +16,26 @@ import meRoutes from "./routes/me.routes.js";
 import ordersRoutes from "./routes/orders.routes.js";
 import paymentRoutes from "./routes/payment.routes.js";
 
+const allowedOrigins = env.clientOrigin
+  .split(",")
+  .map((item) => item.trim())
+  .filter(Boolean);
+
+function isAllowedOrigin(origin?: string) {
+  if (!origin) return true;
+  if (env.clientOrigin === "*") return true;
+  return allowedOrigins.includes(origin);
+}
+
 export function createApp() {
   const app = express();
 
   app.use(helmet());
   app.use(
     cors({
-      origin: env.clientOrigin === "*" ? true : env.clientOrigin.split(",").map((item) => item.trim()),
+      origin(origin, callback) {
+        callback(null, isAllowedOrigin(origin));
+      },
       credentials: true,
     }),
   );
