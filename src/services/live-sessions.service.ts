@@ -439,11 +439,23 @@ export async function updateLiveSessionCommentCount(liveSessionId: string) {
 
   if (countError) throw new Error(countError.message);
 
+  const { data: session, error: sessionError } = await supabaseAdmin
+    .from("live_sessions")
+    .select("started_at,ended_at,status")
+    .eq("id", liveSessionId)
+    .maybeSingle();
+
+  if (sessionError) throw new Error(sessionError.message);
+
+  const now = nowIso();
+  const durationSeconds = calcDurationSeconds(session?.started_at, session?.ended_at || now);
+
   const { error } = await supabaseAdmin
     .from("live_sessions")
     .update({
       comment_count: count || 0,
-      updated_at: nowIso(),
+      duration_seconds: durationSeconds,
+      updated_at: now,
     })
     .eq("id", liveSessionId);
 
