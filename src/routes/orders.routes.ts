@@ -5,9 +5,11 @@ import { ok } from "../lib/response.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { requireUsableAccountContext } from "../services/account.service.js";
 import {
+  addOrderItem,
   createOrderFromComment,
   deleteOrder,
   listOrders,
+  removeOrderItem,
   updateOrderDepositStatus,
   updateOrderStatus,
 } from "../services/orders.service.js";
@@ -28,6 +30,13 @@ const depositSchema = z.object({
 
 const statusSchema = z.object({
   status: z.enum(["draft", "confirmed", "packed", "shipping", "completed", "canceled", "returned"]),
+});
+
+const orderItemSchema = z.object({
+  productCode: z.string().optional().default(""),
+  productName: z.string().optional().default(""),
+  price: z.number().min(0).default(0),
+  quantity: z.number().int().positive().default(1),
 });
 
 router.use(requireAuth);
@@ -72,6 +81,36 @@ router.patch(
       depositStatus: body.depositStatus,
     });
     return ok(response, { order });
+  }),
+);
+
+router.post(
+  "/:orderId/items",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const body = orderItemSchema.parse(request.body || {});
+    const item = await addOrderItem({
+      shopId: context.shop.id,
+      orderId: String(request.params.orderId),
+      productCode: body.productCode,
+      productName: body.productName,
+      price: body.price,
+      quantity: body.quantity,
+    });
+    return ok(response, { item }, 201);
+  }),
+);
+
+router.delete(
+  "/:orderId/items/:itemId",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const result = await removeOrderItem({
+      shopId: context.shop.id,
+      orderId: String(request.params.orderId),
+      itemId: String(request.params.itemId),
+    });
+    return ok(response, result);
   }),
 );
 

@@ -240,3 +240,104 @@ export async function deleteOrder({ shopId, orderId }: { shopId: string; orderId
 
   return { ok: true };
 }
+
+export async function addOrderItem({
+  shopId,
+  orderId,
+  productCode,
+  productName,
+  price,
+  quantity,
+}: {
+  shopId: string;
+  orderId: string;
+  productCode?: string;
+  productName?: string;
+  price: number;
+  quantity: number;
+}) {
+  await assertOrderInShop(orderId, shopId);
+
+  const now = new Date().toISOString();
+  const safePrice = Number.isFinite(Number(price)) && price >= 0 ? Number(price) : 0;
+  const safeQty = Number.isInteger(quantity) && quantity > 0 ? quantity : 1;
+
+  const { data: item, error } = await supabaseAdmin
+    .from("order_items")
+    .insert({
+      order_id: orderId,
+      shop_id: shopId,
+      product_code: productCode || "",
+      product_name: productName || productCode || "",
+      variant_name: "",
+      color: "",
+      size: "",
+      quantity: safeQty,
+      price: safePrice,
+      raw_comment_text: "",
+      created_at: now,
+      updated_at: now,
+    })
+    .select("*")
+    .single();
+
+  if (error) throw new Error(error.message);
+
+  // Recalculate subtotal from all items
+  const { data: allItems, error: allItemsError } = await supabaseAdmin
+    .from("order_items")
+    .select("price, quantity")
+    .eq("order_id", orderId);
+
+  if (allItemsError) throw new Error(allItemsError.message);
+
+  const subtotal = (allItems || []).reduce((sum: number, i: any) => sum + i.price * i.quantity, 0);
+
+  await supabaseAdmin
+    .from("orders")
+    .update({ subtotal_amount: subtotal, updated_at: now })
+    .eq("id", orderId)
+    .eq("shop_id", shopId);
+
+  return item;
+}
+
+export async function removeOrderItem({
+  shopId,
+  orderId,
+  itemId,
+}: {
+  shopId: string;
+  orderId: string;
+  itemId: string;
+}) {
+  await assertOrderInShop(orderId, shopId);
+
+  const { error } = await supabaseAdmin
+    .from("order_items")
+    .delete()
+    .eq("id", itemId)
+    .eq("order_id", orderId)
+    .eq("shop_id", shopId);
+
+  if (error) throw new Error(error.message);
+
+  const now = new Date().toISOString();
+
+  const { data: allItems, error: allItemsError } = await supabaseAdmin
+    .from("order_items")
+    .select("price, quantity")
+    .eq("order_id", orderId);
+
+  if (allItemsError) throw new Error(allItemsError.message);
+
+  const subtotal = (allItems || []).reduce((sum: number, i: any) => sum + i.price * i.quantity, 0);
+
+  await supabaseAdmin
+    .from("orders")
+    .update({ subtotal_amount: subtotal, updated_at: now })
+    .eq("id", orderId)
+    .eq("shop_id", shopId);
+
+  return { ok: true };
+}
