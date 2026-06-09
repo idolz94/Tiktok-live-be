@@ -1,0 +1,9 @@
+{
+  "analyze": {
+    "skipContextFiles": true,
+    "skipSkills": false,
+    "embeddings": false,
+    "workerTimeout": 60,
+    "maxFileSize": 1000000
+  }
+}

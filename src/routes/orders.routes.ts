@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../lib/async-handler.js";
-import { ok } from "../lib/response.js";
+import { mutateCreated, mutateOk, ok } from "../lib/response.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { requireUsableAccountContext } from "../services/account.service.js";
 import {
@@ -66,7 +66,7 @@ router.post(
       note: body.note,
     });
 
-    return ok(response, result, 201);
+    return mutateCreated(response, "Tạo đơn thành công.", result);
   }),
 );
 
@@ -80,7 +80,7 @@ router.patch(
       orderId: String(request.params.orderId),
       depositStatus: body.depositStatus,
     });
-    return ok(response, { order });
+    return mutateOk(response, "Cập nhật trạng thái thanh toán thành công.", { order });
   }),
 );
 
@@ -97,7 +97,7 @@ router.post(
       price: body.price,
       quantity: body.quantity,
     });
-    return ok(response, { item }, 201);
+    return mutateCreated(response, "Thêm sản phẩm thành công.", { item });
   }),
 );
 
@@ -105,12 +105,12 @@ router.delete(
   "/:orderId/items/:itemId",
   asyncHandler(async (request, response) => {
     const context = await requireUsableAccountContext(request);
-    const result = await removeOrderItem({
+    await removeOrderItem({
       shopId: context.shop.id,
       orderId: String(request.params.orderId),
       itemId: String(request.params.itemId),
     });
-    return ok(response, result);
+    return mutateOk(response, "Xóa sản phẩm thành công.", null);
   }),
 );
 
@@ -124,7 +124,7 @@ router.patch(
       orderId: String(request.params.orderId),
       status: body.status,
     });
-    return ok(response, { order });
+    return mutateOk(response, "Cập nhật trạng thái đơn hàng thành công.", { order });
   }),
 );
 
@@ -132,8 +132,8 @@ router.delete(
   "/:orderId",
   asyncHandler(async (request, response) => {
     const context = await requireUsableAccountContext(request);
-    const result = await deleteOrder({ shopId: context.shop.id, orderId: String(request.params.orderId) });
-    return ok(response, result);
+    await deleteOrder({ shopId: context.shop.id, orderId: String(request.params.orderId) });
+    return mutateOk(response, "Xóa đơn hàng thành công.", null);
   }),
 );
 

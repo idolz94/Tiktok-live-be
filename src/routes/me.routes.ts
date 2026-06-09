@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../lib/async-handler.js";
-import { ok } from "../lib/response.js";
+import { mutateCreated, mutateOk, ok } from "../lib/response.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { getAccountContext, requireShopId } from "../services/account.service.js";
 import {
@@ -73,7 +73,7 @@ router.post(
       displayName: body.displayName,
       isDefault: body.isDefault,
     });
-    return ok(response, { channel }, 201);
+    return mutateCreated(response, "Thêm kênh TikTok thành công.", { channel });
   }),
 );
 
@@ -91,7 +91,7 @@ router.patch(
       displayName: body.displayName,
       isDefault: body.isDefault,
     });
-    return ok(response, { channel });
+    return mutateOk(response, "Cập nhật kênh TikTok thành công.", { channel });
   }),
 );
 
@@ -105,7 +105,7 @@ router.delete(
       shopId,
       channelId: String(request.params.channelId),
     });
-    return ok(response, { success: true });
+    return mutateOk(response, "Xóa kênh TikTok thành công.", null);
   }),
 );
 

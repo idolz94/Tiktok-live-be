@@ -3,7 +3,7 @@ import { z } from "zod";
 import { env } from "../config/env.js";
 import { asyncHandler } from "../lib/async-handler.js";
 import { badRequest } from "../lib/api-error.js";
-import { created, ok } from "../lib/response.js";
+import { mutateCreated, mutateOk, ok } from "../lib/response.js";
 import { supabaseAdmin, supabasePublic } from "../lib/supabase.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { addDays } from "../utils/date.js";
@@ -120,7 +120,7 @@ router.post(
     });
 
     if (loginError || !loginData.session) {
-      return created(response, {
+      return mutateCreated(response, "Đăng ký thành công. Vui lòng đăng nhập lại.", {
         user,
         profile: null,
         shop,
@@ -128,7 +128,6 @@ router.post(
         license,
         canUseApp: true,
         reason: null,
-        message: "Đăng ký thành công. Vui lòng đăng nhập lại.",
       });
     }
 
@@ -139,7 +138,7 @@ router.post(
       maxAge: 1000 * 60 * 60 * 24 * 30,
     });
 
-    return created(response, {
+    return mutateCreated(response, "Đăng ký thành công.", {
       user: loginData.user,
       session: loginData.session,
       accessToken: loginData.session.access_token,
@@ -192,7 +191,7 @@ router.post(
     }
 
     response.clearCookie(env.authCookieName);
-    return ok(response, { ok: true });
+    return mutateOk(response, "Đăng xuất thành công.", null);
   }),
 );
 

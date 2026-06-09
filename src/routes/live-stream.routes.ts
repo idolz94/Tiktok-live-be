@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../lib/async-handler.js";
-import { ok } from "../lib/response.js";
+import { mutateOk, ok } from "../lib/response.js";
 import { addSseClient, getSseStats } from "../lib/sse-hub.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { requireUsableAccountContext } from "../services/account.service.js";
@@ -62,9 +62,7 @@ router.post(
       console.error("START_PYTHON_COLLECTOR_FAILED", error);
     });
 
-    return ok(response, {
-      success: true,
-      message: "Đã gửi yêu cầu bắt đầu live stream.",
+    return mutateOk(response, "Đã gửi yêu cầu bắt đầu live stream.", {
       status: "starting",
       username: body.username,
     });
@@ -87,7 +85,7 @@ router.post(
       reason: "manual_stop",
     });
 
-    return ok(response, {
+    return mutateOk(response, "Đã gửi yêu cầu dừng live stream.", {
       collector,
       session,
     });
