@@ -57,7 +57,11 @@ router.post(
     });
 
     if (!shop?.id) {
-      throw new Error(`Không tìm thấy shop cho TikTok username ${body.liveUsername}.`);
+      return ok(response, {
+        accepted: false,
+        ignored: true,
+        reason: `Không tìm thấy shop cho TikTok username ${body.liveUsername}.`,
+      });
     }
 
     const session = await ensureCollectorLiveSession({
