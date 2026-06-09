@@ -40,11 +40,20 @@ const eventSchema = z.object({
 
   commentCount: z.number().optional().nullable(),
   lastCommentAt: z.string().optional().nullable(),
+
+  // USER_JOINED fields
+  joinUsername: z.string().optional().nullable(),
+  joinDisplayName: z.string().optional().nullable(),
+  joinAvatarUrl: z.string().optional().nullable(),
 });
 
 type CollectorEventBody = z.infer<typeof eventSchema> & {
   liveUsername: string;
   collectorSessionId: string;
+};
+
+type UserJoinedBody = z.infer<typeof eventSchema> & {
+  liveUsername: string;
 };
 
 function normalizeCollectorEventBody(input: unknown): CollectorEventBody {
@@ -71,6 +80,13 @@ function normalizeCollectorEventBody(input: unknown): CollectorEventBody {
   };
 }
 
+function normalizeUserJoinedBody(input: unknown): UserJoinedBody {
+  const body = eventSchema.parse(input || {});
+  const liveUsername = String(body.liveUsername || body.username || "").trim();
+  if (!liveUsername) throw new Error("Thiếu liveUsername.");
+  return { ...body, liveUsername };
+}
+
 async function resolveShopOrThrow(body: CollectorEventBody) {
   const shop = await resolveShopForCollectorEvent({
     shopId: body.shopId,
@@ -82,6 +98,32 @@ async function resolveShopOrThrow(body: CollectorEventBody) {
   }
 
   return shop;
+}
+
+async function handleUserJoined(body: UserJoinedBody, response: any) {
+  const createdAt = body.createdAt || new Date().toISOString();
+
+  const shop = await resolveShopForCollectorEvent({
+    shopId: body.shopId,
+    liveUsername: body.liveUsername,
+  });
+
+  if (!shop?.id) {
+    throw new Error(`Không tìm thấy shop cho TikTok username ${body.liveUsername}.`);
+  }
+
+  const payload = {
+    shopId: shop.id,
+    liveUsername: body.liveUsername,
+    joinUsername: body.joinUsername || null,
+    joinDisplayName: body.joinDisplayName || null,
+    joinAvatarUrl: body.joinAvatarUrl || null,
+    createdAt,
+  };
+
+  const sseClientCount = broadcastSseToShop(shop.id, "USER_JOINED", payload);
+
+  return ok(response, { accepted: true, sseClientCount });
 }
 
 async function findOwnerUserIdOrThrow(shopId: string) {
@@ -295,8 +337,14 @@ router.use(requireInternalApiKey);
 router.post(
   "/",
   asyncHandler(async (request, response) => {
+    const eventType = String(request.body?.eventType || "").toUpperCase();
+
+    if (eventType === "USER_JOINED") {
+      const body = normalizeUserJoinedBody(request.body || {});
+      return handleUserJoined(body, response);
+    }
+
     const body = normalizeCollectorEventBody(request.body || {});
-    const eventType = String(body.eventType || "").toUpperCase();
 
     if (eventType === "LIVE_CONNECTED") {
       return handleConnected(body, response);

@@ -11,6 +11,7 @@ export type SseEventName =
   | "COMMENT"
   | "COMMENT_SAVED"
   | "MESSAGE"
+  | "USER_JOINED"
   | "COLLECTOR_STOPPED";
 
 type SseClient = {
