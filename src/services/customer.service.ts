@@ -1,3 +1,4 @@
+import { notFound } from "../lib/api-error.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 
 export async function findOrCreateCustomer({
@@ -75,4 +76,40 @@ export async function updateCustomerAfterOrder({
     .eq("id", customerId);
 
   if (error) throw new Error(error.message);
+}
+
+export async function updateCustomerProfile({
+  shopId,
+  customerId,
+  customerType,
+  phone,
+  referenceInfo,
+  shippingAddress,
+}: {
+  shopId: string;
+  customerId: string;
+  customerType?: string | null;
+  phone?: string | null;
+  referenceInfo?: string | null;
+  shippingAddress?: string | null;
+}) {
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+
+  if (customerType !== undefined) patch.customer_type = customerType;
+  if (phone !== undefined) patch.phone = phone;
+  if (referenceInfo !== undefined) patch.reference_info = referenceInfo;
+  if (shippingAddress !== undefined) patch.shipping_address = shippingAddress;
+
+  const { data, error } = await supabaseAdmin
+    .from("customers")
+    .update(patch)
+    .eq("id", customerId)
+    .eq("shop_id", shopId)
+    .select("*")
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) throw notFound("Không tìm thấy khách hàng.");
+
+  return data;
 }

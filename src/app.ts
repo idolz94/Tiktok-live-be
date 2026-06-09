@@ -7,6 +7,7 @@ import morgan from "morgan";
 import { env } from "./config/env.js";
 import { errorHandler, notFoundHandler } from "./middlewares/error.js";
 import authRoutes from "./routes/auth.routes.js";
+import customersRoutes from "./routes/customers.routes.js";
 import licenseRoutes from "./routes/license.routes.js";
 import internalLiveCommentsRoutes from "./routes/internal-live-comments.routes.js";
 import internalLiveEventsRoutes from "./routes/internal-live-events.routes.js";
@@ -67,6 +68,7 @@ export function createApp() {
   app.use("/api/auth", authRoutes);
   app.use("/api/me", meRoutes);
   app.use("/api/orders", ordersRoutes);
+  app.use("/api/customers", customersRoutes);
   app.use("/api/live-comments", liveCommentsRoutes);
   app.use("/api/live-sessions", liveSessionsRoutes);
   app.use("/api/live-stream", liveStreamRoutes);
