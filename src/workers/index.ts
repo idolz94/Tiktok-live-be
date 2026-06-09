@@ -1,5 +1,4 @@
 import { Worker } from "bullmq";
-import { env } from "../config/env.js";
 import { assertRequiredEnv } from "../config/env.js";
 import { getRedisConnectionOptions } from "../lib/redis.js";
 
@@ -7,8 +6,8 @@ assertRequiredEnv();
 
 const connection = getRedisConnectionOptions();
 
-if (!env.enableRedis) {
-  console.log("Worker disabled. Set ENABLE_REDIS=true to run BullMQ workers.");
+if (!connection) {
+  console.log("Worker disabled. Set REDIS_URL to run BullMQ workers.");
   process.exit(0);
 }
 

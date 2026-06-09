@@ -1,10 +1,13 @@
 import { Redis } from "ioredis";
-import { env } from "../config/env.js";
+
+const REDIS_URL = process.env.REDIS_URL || "";
 
 let redis: Redis | null = null;
 
 export function getRedisConnectionOptions() {
-  const url = new URL(env.redisUrl);
+  if (!REDIS_URL) return null;
+
+  const url = new URL(REDIS_URL);
 
   return {
     host: url.hostname,
@@ -17,10 +20,10 @@ export function getRedisConnectionOptions() {
 }
 
 export function getRedis() {
-  if (!env.enableRedis) return null;
+  if (!REDIS_URL) return null;
 
   if (!redis) {
-    redis = new Redis(getRedisConnectionOptions());
+    redis = new Redis(getRedisConnectionOptions()!);
   }
 
   return redis;

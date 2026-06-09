@@ -11,12 +11,6 @@ function readNumberEnv(key: string, fallback: number) {
   return Number.isFinite(value) ? value : fallback;
 }
 
-function readBooleanEnv(key: string, fallback = false) {
-  const value = String(process.env[key] ?? "").toLowerCase();
-  if (["1", "true", "yes", "on"].includes(value)) return true;
-  if (["0", "false", "no", "off"].includes(value)) return false;
-  return fallback;
-}
 
 export const env = {
   nodeEnv: readEnv("NODE_ENV", "development"),
@@ -28,11 +22,6 @@ export const env = {
   authCookieName: readEnv("AUTH_COOKIE_NAME", "lumi_access_token"),
   trialDays: readNumberEnv("TRIAL_DAYS", 365),
   defaultPlanCode: readEnv("DEFAULT_PLAN_CODE", "free"),
-  redisUrl: readEnv("REDIS_URL", "redis://localhost:6379"),
-  enableRedis: readBooleanEnv("ENABLE_REDIS", false),
-  paymentProvider: readEnv("PAYMENT_PROVIDER", "manual"),
-  paymentReturnUrl: readEnv("PAYMENT_RETURN_URL", "http://localhost:3000/settings/license"),
-  paymentWebhookSecret: readEnv("PAYMENT_WEBHOOK_SECRET", "change_me"),
 
   // Internal channel: Python TikTok Collector -> Node.js Backend
   nodeInternalApiKey: readEnv("NODE_INTERNAL_API_KEY", "change_me"),

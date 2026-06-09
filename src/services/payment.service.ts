@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { env } from "../config/env.js";
 import { supabaseAdmin } from "../lib/supabase.js";
 import { activateLicenseFromPayment } from "./license.service.js";
 
@@ -21,14 +20,14 @@ export async function createManualCheckout({
     .from("payments")
     .insert({
       shop_id: shopId,
-      provider: env.paymentProvider,
+      provider: "manual",
       payment_code: paymentCode,
       plan_code: planCode,
       months,
       amount,
       currency: "VND",
       status: "pending",
-      checkout_url: env.paymentReturnUrl,
+      checkout_url: process.env.PAYMENT_RETURN_URL || "",
       raw_payload: {},
       created_at: now,
       updated_at: now,

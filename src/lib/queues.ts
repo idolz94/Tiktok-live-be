@@ -1,5 +1,4 @@
 import { Queue } from "bullmq";
-import { env } from "../config/env.js";
 import { getRedisConnectionOptions } from "./redis.js";
 
 export type QueueName = "live-events" | "payment-events";
@@ -7,9 +6,8 @@ export type QueueName = "live-events" | "payment-events";
 const queues = new Map<QueueName, Queue>();
 
 export function getQueue(name: QueueName) {
-  if (!env.enableRedis) return null;
-
   const connection = getRedisConnectionOptions();
+  if (!connection) return null;
 
   const cached = queues.get(name);
   if (cached) return cached;
