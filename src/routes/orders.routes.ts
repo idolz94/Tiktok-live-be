@@ -58,7 +58,7 @@ router.post(
 
     const result = await createOrderFromComment({
       shopId: context.shop.id,
-      userId: context.user.id,
+      userId: context.userId,
       comment: body.comment,
       liveSessionId: body.liveSessionId,
       price: body.price,

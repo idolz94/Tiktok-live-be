@@ -3,7 +3,7 @@ import { z } from "zod";
 import { asyncHandler } from "../lib/async-handler.js";
 import { mutateCreated, mutateOk, ok } from "../lib/response.js";
 import { requireAuth } from "../middlewares/auth.js";
-import { getAccountContext, requireShopId } from "../services/account.service.js";
+import { bootstrapAccountContext, requireShopId } from "../services/account.service.js";
 import {
   createTikTokChannel,
   deleteTikTokChannel,
@@ -29,14 +29,14 @@ router.get(
   "/bootstrap",
   requireAuth,
   asyncHandler(async (request, response) => {
-    const context = await getAccountContext(request);
+    const context = await bootstrapAccountContext(request);
 
     const tiktokChannels = context.shop?.id
       ? await listTikTokChannels(context.shop.id)
       : [];
 
     return ok(response, {
-      user: context.user,
+      userId: context.userId,
       profile: context.profile,
       shopMember: context.shopMember,
       member: context.shopMember,

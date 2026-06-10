@@ -11,15 +11,18 @@ function readNumberEnv(key: string, fallback: number) {
   return Number.isFinite(value) ? value : fallback;
 }
 
-
 export const env = {
   nodeEnv: readEnv("NODE_ENV", "development"),
   port: readNumberEnv("PORT", 3001),
   clientOrigin: readEnv("CLIENT_ORIGIN", "http://localhost:3000"),
-  supabaseUrl: readEnv("SUPABASE_URL"),
-  supabaseAnonKey: readEnv("SUPABASE_ANON_KEY"),
-  supabaseServiceRoleKey: readEnv("SUPABASE_SERVICE_ROLE_KEY"),
-  authCookieName: readEnv("AUTH_COOKIE_NAME", "lumi_access_token"),
+
+  // Neon Postgres
+  databaseUrl: readEnv("DATABASE_URL"),
+
+  // Clerk
+  clerkSecretKey: readEnv("CLERK_SECRET_KEY"),
+  clerkPublishableKey: readEnv("CLERK_PUBLISHABLE_KEY"),
+
   trialDays: readNumberEnv("TRIAL_DAYS", 365),
   defaultPlanCode: readEnv("DEFAULT_PLAN_CODE", "free"),
 
@@ -36,9 +39,8 @@ export const env = {
 
 export function assertRequiredEnv() {
   const missing = [
-    ["SUPABASE_URL", env.supabaseUrl],
-    ["SUPABASE_ANON_KEY", env.supabaseAnonKey],
-    ["SUPABASE_SERVICE_ROLE_KEY", env.supabaseServiceRoleKey],
+    ["DATABASE_URL", env.databaseUrl],
+    ["CLERK_SECRET_KEY", env.clerkSecretKey],
   ].filter(([, value]) => !value);
 
   if (missing.length > 0) {

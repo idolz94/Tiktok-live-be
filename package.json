@@ -2,7 +2,7 @@
   "name": "lumi-backend",
   "version": "1.0.0",
   "private": true,
-  "description": "Backend API riêng cho Lumi client Next.js: Supabase, Redis, Worker, Payment, License.",
+  "description": "Backend API riêng cho Lumi client Next.js: Neon/Drizzle, Clerk, Redis, Worker, Payment, License.",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -14,10 +14,15 @@
     "lint": "eslint . --ext .ts",
     "gn:index": "gitnexus analyze --skip-agents-md",
     "gn:index:force": "gitnexus analyze --force --skip-agents-md",
-    "gn:setup": "gitnexus setup"
+    "gn:setup": "gitnexus setup",
+    "db:push": "drizzle-kit push",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.49.1",
+    "@clerk/express": "^2.1.23",
+    "@neondatabase/serverless": "^1.1.0",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
@@ -27,6 +32,7 @@
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
+    "drizzle-orm": "^0.45.2",
     "express": "^4.21.2",
     "helmet": "^8.0.0",
     "ioredis": "^5.4.2",
@@ -35,6 +41,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "drizzle-kit": "^0.31.10",
     "tsx": "^4.19.2"
   }
 }

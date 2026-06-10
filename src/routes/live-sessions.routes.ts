@@ -45,7 +45,7 @@ router.post(
     const body = startSchema.parse(request.body || {});
     const session = await startLiveSession({
       shopId: context.shop.id,
-      userId: context.user.id,
+      userId: context.userId,
       sessionId: body.sessionId,
       username: body.username,
       startedAt: body.startedAt,
@@ -68,7 +68,7 @@ router.post(
     const body = endSchema.parse(request.body || {});
     const session = await endLiveSession({
       shopId: context.shop.id,
-      userId: context.user.id,
+      userId: context.userId,
       sessionId: body.sessionId,
       username: body.username,
       startedAt: body.startedAt,

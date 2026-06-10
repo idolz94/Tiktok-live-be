@@ -31,7 +31,7 @@ router.get(
     const removeClient = addSseClient({
       id: clientId,
       shopId: context.shop.id,
-      userId: context.user.id,
+      userId: context.userId,
       response,
       connectedAt: new Date().toISOString(),
     });

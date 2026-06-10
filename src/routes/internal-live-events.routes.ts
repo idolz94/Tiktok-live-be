@@ -179,7 +179,7 @@ async function handleConnected(body: CollectorEventBody, response: any) {
     collectorSessionId: body.collectorSessionId,
     liveUsername: body.liveUsername,
     roomId: body.roomId || null,
-    startedAt: session.started_at || createdAt,
+    startedAt: session.startedAt || createdAt,
     createdAt,
   };
 
@@ -217,10 +217,10 @@ async function handleDisconnected(body: CollectorEventBody, response: any) {
     endedAt,
     createdAt: endedAt,
     status: "ended",
-    durationSeconds: session?.duration_seconds || session?.durationSeconds || 0,
-    duration_seconds: session?.duration_seconds || session?.durationSeconds || 0,
-    commentCount: session?.comment_count ?? body.commentCount ?? 0,
-    comment_count: session?.comment_count ?? body.commentCount ?? 0,
+    durationSeconds: session?.durationSeconds || 0,
+    duration_seconds: session?.durationSeconds || 0,
+    commentCount: session?.commentCount ?? body.commentCount ?? 0,
+    comment_count: session?.commentCount ?? body.commentCount ?? 0,
   };
 
   const sseClientCount = broadcastSseToShop(shop.id, "LIVE_DISCONNECTED", payload);
@@ -257,10 +257,10 @@ async function handleCollectorStopped(body: CollectorEventBody, response: any) {
     endedAt,
     createdAt: endedAt,
     status: "ended",
-    durationSeconds: session?.duration_seconds || session?.durationSeconds || 0,
-    duration_seconds: session?.duration_seconds || session?.durationSeconds || 0,
-    commentCount: session?.comment_count ?? body.commentCount ?? 0,
-    comment_count: session?.comment_count ?? body.commentCount ?? 0,
+    durationSeconds: session?.durationSeconds || 0,
+    duration_seconds: session?.durationSeconds || 0,
+    commentCount: session?.commentCount ?? body.commentCount ?? 0,
+    comment_count: session?.commentCount ?? body.commentCount ?? 0,
   };
 
   const sseClientCount = broadcastSseToShop(shop.id, "COLLECTOR_STOPPED", payload);

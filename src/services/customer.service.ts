@@ -1,5 +1,7 @@
+import { eq, and } from "drizzle-orm";
+import { db } from "../lib/db.js";
+import { customers } from "../db/schema/index.js";
 import { notFound } from "../lib/api-error.js";
-import { supabaseAdmin } from "../lib/supabase.js";
 
 export async function findOrCreateCustomer({
   shopId,
@@ -15,35 +17,28 @@ export async function findOrCreateCustomer({
   const normalizedUsername = String(tiktokUsername || "").trim();
   if (!normalizedUsername) return null;
 
-  const { data: existedCustomer, error: findError } = await supabaseAdmin
-    .from("customers")
-    .select("*")
-    .eq("shop_id", shopId)
-    .eq("tiktok_username", normalizedUsername)
-    .maybeSingle();
+  const rows = await db
+    .select()
+    .from(customers)
+    .where(and(eq(customers.shopId, shopId), eq(customers.tiktokUsername, normalizedUsername)))
+    .limit(1);
 
-  if (findError) throw new Error(findError.message);
-  if (existedCustomer) return existedCustomer;
+  if (rows[0]) return rows[0];
 
-  const now = new Date().toISOString();
-  const { data: newCustomer, error: createError } = await supabaseAdmin
-    .from("customers")
-    .insert({
-      shop_id: shopId,
-      tiktok_username: normalizedUsername,
-      tiktok_unique_id: normalizedUsername.replace(/^@/, ""),
-      display_name: displayName,
-      avatar_url: avatarUrl,
-      total_orders: 0,
-      total_spent: 0,
+  const [newCustomer] = await db
+    .insert(customers)
+    .values({
+      shopId,
+      tiktokUsername: normalizedUsername,
+      tiktokUniqueId: normalizedUsername.replace(/^@/, ""),
+      displayName,
+      avatarUrl,
+      totalOrders: 0,
+      totalSpent: 0,
       tags: [],
-      created_at: now,
-      updated_at: now,
     })
-    .select("*")
-    .single();
+    .returning();
 
-  if (createError) throw new Error(createError.message);
   return newCustomer;
 }
 
@@ -56,26 +51,24 @@ export async function updateCustomerAfterOrder({
 }) {
   if (!customerId) return;
 
-  const { data: customer, error: findError } = await supabaseAdmin
-    .from("customers")
-    .select("id,total_orders,total_spent")
-    .eq("id", customerId)
-    .maybeSingle();
+  const rows = await db
+    .select({ id: customers.id, totalOrders: customers.totalOrders, totalSpent: customers.totalSpent })
+    .from(customers)
+    .where(eq(customers.id, customerId))
+    .limit(1);
 
-  if (findError) throw new Error(findError.message);
+  const customer = rows[0];
   if (!customer) return;
 
-  const { error } = await supabaseAdmin
-    .from("customers")
-    .update({
-      total_orders: Number(customer.total_orders || 0) + 1,
-      total_spent: Number(customer.total_spent || 0) + totalAmount,
-      last_order_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+  await db
+    .update(customers)
+    .set({
+      totalOrders: (customer.totalOrders ?? 0) + 1,
+      totalSpent: (customer.totalSpent ?? 0) + totalAmount,
+      lastOrderAt: new Date(),
+      updatedAt: new Date(),
     })
-    .eq("id", customerId);
-
-  if (error) throw new Error(error.message);
+    .where(eq(customers.id, customerId));
 }
 
 export async function updateCustomerProfile({
@@ -93,23 +86,21 @@ export async function updateCustomerProfile({
   referenceInfo?: string | null;
   shippingAddress?: string | null;
 }) {
-  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  const patch: Record<string, unknown> = { updatedAt: new Date() };
 
-  if (customerType !== undefined) patch.customer_type = customerType;
+  if (customerType !== undefined) patch.customerType = customerType;
   if (phone !== undefined) patch.phone = phone;
-  if (referenceInfo !== undefined) patch.reference_info = referenceInfo;
-  if (shippingAddress !== undefined) patch.shipping_address = shippingAddress;
+  if (referenceInfo !== undefined) patch.referenceInfo = referenceInfo;
+  if (shippingAddress !== undefined) patch.shippingAddress = shippingAddress;
 
-  const { data, error } = await supabaseAdmin
-    .from("customers")
-    .update(patch)
-    .eq("id", customerId)
-    .eq("shop_id", shopId)
-    .select("*")
-    .maybeSingle();
+  const rows = await db
+    .update(customers)
+    .set(patch)
+    .where(and(eq(customers.id, customerId), eq(customers.shopId, shopId)))
+    .returning();
 
-  if (error) throw new Error(error.message);
-  if (!data) throw notFound("Không tìm thấy khách hàng.");
+  const updated = rows[0];
+  if (!updated) throw notFound("Không tìm thấy khách hàng.");
 
-  return data;
+  return updated;
 }

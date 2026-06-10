@@ -1,5 +1,7 @@
+import { eq, and, inArray, sql } from "drizzle-orm";
+import { db } from "../lib/db.js";
+import { orders, orderItems } from "../db/schema/index.js";
 import { badRequest, notFound } from "../lib/api-error.js";
-import { supabaseAdmin } from "../lib/supabase.js";
 import { getCommentAvatar, getCommentDisplayName, getCommentText } from "../utils/comment.js";
 import { createOrderCode, isUuid } from "../utils/id.js";
 import { getCommentTikTokUsername } from "../utils/tiktok.js";
@@ -10,35 +12,30 @@ import { updateLiveSessionOrderCount } from "./live-sessions.service.js";
 const DEFAULT_PRICE = 20;
 const DEFAULT_QUANTITY = 1;
 
+async function attachProducts<T extends { id: string }>(orderRows: T[]): Promise<(T & { products: any[] })[]> {
+  if (!orderRows.length) return orderRows.map((o) => ({ ...o, products: [] }));
+
+  const orderIds = orderRows.map((o) => o.id);
+  const items = await db.select().from(orderItems).where(inArray(orderItems.orderId, orderIds));
+
+  const byOrderId = new Map<string, any[]>();
+  for (const item of items) {
+    const list = byOrderId.get(item.orderId) ?? [];
+    list.push(item);
+    byOrderId.set(item.orderId, list);
+  }
+
+  return orderRows.map((o) => ({ ...o, products: byOrderId.get(o.id) ?? [] }));
+}
+
 export async function listOrders(shopId: string) {
-  const { data: orders, error: ordersError } = await supabaseAdmin
-    .from("orders")
-    .select("*")
-    .eq("shop_id", shopId)
-    .order("created_at", { ascending: false });
+  const rows = await db
+    .select()
+    .from(orders)
+    .where(eq(orders.shopId, shopId))
+    .orderBy(sql`${orders.createdAt} desc`);
 
-  if (ordersError) throw new Error(ordersError.message);
-
-  const orderRows = orders || [];
-  if (!orderRows.length) return [];
-
-  const orderIds = orderRows.map((item: any) => item.id);
-
-  const { data: orderItems, error: orderItemsError } = await supabaseAdmin
-    .from("order_items")
-    .select("*")
-    .in("order_id", orderIds);
-
-  if (orderItemsError) throw new Error(orderItemsError.message);
-
-  const itemsByOrderId = new Map<string, any[]>();
-  (orderItems || []).forEach((item: any) => {
-    const oldItems = itemsByOrderId.get(item.order_id) || [];
-    oldItems.push(item);
-    itemsByOrderId.set(item.order_id, oldItems);
-  });
-
-  return orderRows.map((order: any) => ({ ...order, products: itemsByOrderId.get(order.id) || [] }));
+  return attachProducts(rows);
 }
 
 export async function createOrderFromComment({
@@ -68,103 +65,81 @@ export async function createOrderFromComment({
   const safePrice = Number.isFinite(Number(price)) ? Number(price) : DEFAULT_PRICE;
   const safeQuantity = Number.isFinite(Number(quantity)) ? Number(quantity) : DEFAULT_QUANTITY;
 
-  const customer = await findOrCreateCustomer({
-    shopId,
-    tiktokUsername: customerTikTokUsername,
-    displayName,
-    avatarUrl,
-  });
+  const customer = await findOrCreateCustomer({ shopId, tiktokUsername: customerTikTokUsername, displayName, avatarUrl });
 
   const subtotalAmount = safePrice * safeQuantity;
-  const shippingFee = 0;
-  const discountAmount = 0;
-  const totalAmount = subtotalAmount + shippingFee - discountAmount;
-  const codAmount = 0;
+  const totalAmount = subtotalAmount;
   const liveCommentId = await findDbLiveCommentId({ shopId, comment });
   const dbLiveSessionId = isUuid(liveSessionId) ? liveSessionId : null;
-  const now = new Date().toISOString();
 
-  const { data: order, error: orderError } = await supabaseAdmin
-    .from("orders")
-    .insert({
-      shop_id: shopId,
-      customer_id: customer?.id || null,
-      live_session_id: dbLiveSessionId,
-      live_comment_id: liveCommentId,
-      order_code: createOrderCode(),
+  const [order] = await db
+    .insert(orders)
+    .values({
+      shopId,
+      customerId: customer?.id ?? null,
+      liveSessionId: dbLiveSessionId as string | undefined,
+      liveCommentId: liveCommentId as string | undefined,
+      orderCode: createOrderCode(),
       source: "live_comment",
-      customer_name: displayName,
-      customer_tiktok_username: customerTikTokUsername,
-      customer_phone: "",
-      customer_address: "",
-      comment_text: commentText,
+      customerName: displayName,
+      customerTiktokUsername: customerTikTokUsername,
+      customerPhone: "",
+      customerAddress: "",
+      commentText,
       status: "draft",
-      deposit_status: "unpaid",
-      payment_status: "unpaid",
-      shipping_status: "not_shipped",
-      subtotal_amount: subtotalAmount,
-      shipping_fee: shippingFee,
-      discount_amount: discountAmount,
-      // total_amount: totalAmount,
-      deposit_amount: 0,
-      cod_amount: codAmount,
+      depositStatus: "unpaid",
+      paymentStatus: "unpaid",
+      shippingStatus: "not_shipped",
+      subtotalAmount,
+      shippingFee: 0,
+      discountAmount: 0,
+      totalAmount,
+      depositAmount: 0,
+      codAmount: 0,
       note,
-      created_by: userId,
-      created_at: now,
-      updated_at: now,
+      createdBy: userId,
     })
-    .select("*")
-    .single();
+    .returning();
 
-  if (orderError) throw new Error(orderError.message);
-
-  const { error: orderItemError } = await supabaseAdmin
-    .from("order_items")
-    .insert({
-      order_id: order.id,
-      shop_id: shopId,
-      product_code: "",
-      product_name: commentText,
-      variant_name: "",
-      color: "",
-      size: "",
-      quantity: safeQuantity,
-      price: safePrice,
-      // total_amount: subtotalAmount,
-      raw_comment_text: commentText,
-      created_at: now,
-      updated_at: now,
-    });
-
-  if (orderItemError) throw new Error(orderItemError.message);
+  await db.insert(orderItems).values({
+    orderId: order.id,
+    shopId,
+    productCode: "",
+    productName: commentText,
+    variantName: "",
+    color: "",
+    size: "",
+    quantity: safeQuantity,
+    price: safePrice,
+    rawCommentText: commentText,
+  });
 
   void Promise.all([
     updateLiveCommentOrder({ commentId: liveCommentId, orderId: order.id }),
     updateLiveSessionOrderCount(dbLiveSessionId),
-    updateCustomerAfterOrder({ customerId: customer?.id || null, totalAmount }),
-  ]).catch((error) => {
-    console.error("CREATE_ORDER_FROM_COMMENT_SIDE_EFFECT_FAILED", error);
+    updateCustomerAfterOrder({ customerId: customer?.id ?? null, totalAmount }),
+  ]).catch((err) => {
+    console.error("CREATE_ORDER_FROM_COMMENT_SIDE_EFFECT_FAILED", err);
   });
 
   return {
     success: true,
     message: "Tạo đơn thành công.",
     orderId: order.id,
-    orderCode: order.order_code,
+    orderCode: order.orderCode,
   };
 }
 
 async function assertOrderInShop(orderId: string, shopId: string) {
-  const { data, error } = await supabaseAdmin
-    .from("orders")
-    .select("*")
-    .eq("id", orderId)
-    .eq("shop_id", shopId)
-    .maybeSingle();
+  const rows = await db
+    .select()
+    .from(orders)
+    .where(and(eq(orders.id, orderId), eq(orders.shopId, shopId)))
+    .limit(1);
 
-  if (error) throw new Error(error.message);
-  if (!data) throw notFound("Không tìm thấy đơn hàng.");
-  return data;
+  const row = rows[0];
+  if (!row) throw notFound("Không tìm thấy đơn hàng.");
+  return row;
 }
 
 export async function updateOrderDepositStatus({
@@ -178,24 +153,17 @@ export async function updateOrderDepositStatus({
 }) {
   await assertOrderInShop(orderId, shopId);
 
-  const paymentStatus = depositStatus === "paid" ? "paid" : depositStatus === "deposited" ? "partial" : "unpaid";
-  const { data, error } = await supabaseAdmin
-    .from("orders")
-    .update({ deposit_status: depositStatus, payment_status: paymentStatus, updated_at: new Date().toISOString() })
-    .eq("id", orderId)
-    .eq("shop_id", shopId)
-    .select("*")
-    .single();
+  const paymentStatus =
+    depositStatus === "paid" ? "paid" : depositStatus === "deposited" ? "partial" : "unpaid";
 
-  if (error) throw new Error(error.message);
+  const [updated] = await db
+    .update(orders)
+    .set({ depositStatus, paymentStatus, updatedAt: new Date() })
+    .where(and(eq(orders.id, orderId), eq(orders.shopId, shopId)))
+    .returning();
 
-  const { data: products, error: itemError } = await supabaseAdmin
-    .from("order_items")
-    .select("*")
-    .eq("order_id", orderId);
-
-  if (itemError) throw new Error(itemError.message);
-  return { ...data, products: products || [] };
+  const items = await db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
+  return { ...updated, products: items };
 }
 
 export async function updateOrderStatus({
@@ -209,35 +177,23 @@ export async function updateOrderStatus({
 }) {
   await assertOrderInShop(orderId, shopId);
 
-  const patch: Record<string, unknown> = { status, updated_at: new Date().toISOString() };
-  if (status === "confirmed") patch.confirmed_at = new Date().toISOString();
-  if (status === "canceled") patch.canceled_at = new Date().toISOString();
+  const patch: Record<string, unknown> = { status, updatedAt: new Date() };
+  if (status === "confirmed") patch.confirmedAt = new Date();
+  if (status === "canceled") patch.canceledAt = new Date();
 
-  const { data, error } = await supabaseAdmin
-    .from("orders")
-    .update(patch)
-    .eq("id", orderId)
-    .eq("shop_id", shopId)
-    .select("*")
-    .single();
+  const [updated] = await db
+    .update(orders)
+    .set(patch)
+    .where(and(eq(orders.id, orderId), eq(orders.shopId, shopId)))
+    .returning();
 
-  if (error) throw new Error(error.message);
-
-  const { data: products, error: itemError } = await supabaseAdmin
-    .from("order_items")
-    .select("*")
-    .eq("order_id", orderId);
-
-  if (itemError) throw new Error(itemError.message);
-  return { ...data, products: products || [] };
+  const items = await db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
+  return { ...updated, products: items };
 }
 
 export async function deleteOrder({ shopId, orderId }: { shopId: string; orderId: string }) {
   await assertOrderInShop(orderId, shopId);
-
-  const { error } = await supabaseAdmin.from("orders").delete().eq("id", orderId).eq("shop_id", shopId);
-  if (error) throw new Error(error.message);
-
+  await db.delete(orders).where(and(eq(orders.id, orderId), eq(orders.shopId, shopId)));
   return { ok: true };
 }
 
@@ -258,46 +214,36 @@ export async function addOrderItem({
 }) {
   await assertOrderInShop(orderId, shopId);
 
-  const now = new Date().toISOString();
   const safePrice = Number.isFinite(Number(price)) && price >= 0 ? Number(price) : 0;
   const safeQty = Number.isInteger(quantity) && quantity > 0 ? quantity : 1;
 
-  const { data: item, error } = await supabaseAdmin
-    .from("order_items")
-    .insert({
-      order_id: orderId,
-      shop_id: shopId,
-      product_code: productCode || "",
-      product_name: productName || productCode || "",
-      variant_name: "",
+  const [item] = await db
+    .insert(orderItems)
+    .values({
+      orderId,
+      shopId,
+      productCode: productCode ?? "",
+      productName: productName ?? productCode ?? "",
+      variantName: "",
       color: "",
       size: "",
       quantity: safeQty,
       price: safePrice,
-      raw_comment_text: "",
-      created_at: now,
-      updated_at: now,
+      rawCommentText: "",
     })
-    .select("*")
-    .single();
+    .returning();
 
-  if (error) throw new Error(error.message);
+  const allItems = await db
+    .select({ price: orderItems.price, quantity: orderItems.quantity })
+    .from(orderItems)
+    .where(eq(orderItems.orderId, orderId));
 
-  // Recalculate subtotal from all items
-  const { data: allItems, error: allItemsError } = await supabaseAdmin
-    .from("order_items")
-    .select("price, quantity")
-    .eq("order_id", orderId);
+  const subtotal = allItems.reduce((sum, i) => sum + (i.price ?? 0) * (i.quantity ?? 1), 0);
 
-  if (allItemsError) throw new Error(allItemsError.message);
-
-  const subtotal = (allItems || []).reduce((sum: number, i: any) => sum + i.price * i.quantity, 0);
-
-  await supabaseAdmin
-    .from("orders")
-    .update({ subtotal_amount: subtotal, updated_at: now })
-    .eq("id", orderId)
-    .eq("shop_id", shopId);
+  await db
+    .update(orders)
+    .set({ subtotalAmount: subtotal, updatedAt: new Date() })
+    .where(and(eq(orders.id, orderId), eq(orders.shopId, shopId)));
 
   return item;
 }
@@ -313,31 +259,21 @@ export async function removeOrderItem({
 }) {
   await assertOrderInShop(orderId, shopId);
 
-  const { error } = await supabaseAdmin
-    .from("order_items")
-    .delete()
-    .eq("id", itemId)
-    .eq("order_id", orderId)
-    .eq("shop_id", shopId);
+  await db
+    .delete(orderItems)
+    .where(and(eq(orderItems.id, itemId), eq(orderItems.orderId, orderId), eq(orderItems.shopId, shopId)));
 
-  if (error) throw new Error(error.message);
+  const allItems = await db
+    .select({ price: orderItems.price, quantity: orderItems.quantity })
+    .from(orderItems)
+    .where(eq(orderItems.orderId, orderId));
 
-  const now = new Date().toISOString();
+  const subtotal = allItems.reduce((sum, i) => sum + (i.price ?? 0) * (i.quantity ?? 1), 0);
 
-  const { data: allItems, error: allItemsError } = await supabaseAdmin
-    .from("order_items")
-    .select("price, quantity")
-    .eq("order_id", orderId);
-
-  if (allItemsError) throw new Error(allItemsError.message);
-
-  const subtotal = (allItems || []).reduce((sum: number, i: any) => sum + i.price * i.quantity, 0);
-
-  await supabaseAdmin
-    .from("orders")
-    .update({ subtotal_amount: subtotal, updated_at: now })
-    .eq("id", orderId)
-    .eq("shop_id", shopId);
+  await db
+    .update(orders)
+    .set({ subtotalAmount: subtotal, updatedAt: new Date() })
+    .where(and(eq(orders.id, orderId), eq(orders.shopId, shopId)));
 
   return { ok: true };
 }

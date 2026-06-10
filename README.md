@@ -2,32 +2,29 @@
 
 Backend riêng cho client Next.js của Lumi.
 
-Luồng mới:
+Stack: **Node.js + Express + Neon Postgres + Drizzle ORM + Clerk Auth**
 
 ```txt
-Client Next.js
-  ↓ getRequest/postRequest trong src/lib/request.ts
-Lumi Backend API
-  ↓ service role key
-Supabase Postgres/Auth
-  ↓ optional
-Redis / BullMQ Worker / Payment / License
+Client Next.js / React Native
+  ↓
+Lumi Backend API (Express)
+  ↓
+Neon Postgres (Drizzle ORM) + Redis / BullMQ
+  ↓ SSE
+Client Next.js / React Native
 ```
-
-## 1. API đúng với client đang call
-
-Client hiện chỉ cần set:
-
-```env
-NEXT_PUBLIC_API_URL=http://localhost:3001/api
-```
-
-Backend đã có các endpoint:
 
 ```txt
-POST   /api/auth/register
-POST   /api/auth/login
-POST   /api/auth/logout
+Python TikTok Collector
+  ↓ x-internal-api-key
+Backend /api/internal/*
+  ↓
+Neon Postgres + SSE broadcast
+```
+
+## 1. API
+
+```txt
 GET    /api/me/bootstrap
 
 GET    /api/orders
@@ -39,16 +36,20 @@ DELETE /api/orders/:orderId
 GET    /api/live-sessions/history?limit=100
 POST   /api/live-sessions/started
 POST   /api/live-sessions/ended
-POST   /api/live-comments
-```
 
-Có thêm module mở rộng:
-
-```txt
 GET    /api/licenses/current
 POST   /api/licenses/refresh
+
 POST   /api/payments/checkout
 POST   /api/payments/manual-confirm
+
+GET    /api/live-stream/events   (SSE)
+POST   /api/live-stream/start
+POST   /api/live-stream/stop
+
+POST   /api/internal/live-comments/ingest
+POST   /api/internal/live-events
+
 GET    /health
 ```
 
@@ -65,16 +66,19 @@ cp .env.example .env
 ```env
 PORT=3001
 CLIENT_ORIGIN=http://localhost:3000
-SUPABASE_URL=https://YOUR_PROJECT.supabase.co
-SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_KEY
-SUPABASE_SERVICE_ROLE_KEY=YOUR_SUPABASE_SERVICE_ROLE_KEY
-ENABLE_REDIS=false
+DATABASE_URL=postgresql://user:pass@host.neon.tech/lumi?sslmode=require
+CLERK_SECRET_KEY=sk_...
+CLERK_PUBLISHABLE_KEY=pk_...
+NODE_INTERNAL_API_KEY=change_me
+PYTHON_COLLECTOR_BASE_URL=http://localhost:8765
+COLLECTOR_CONTROL_API_KEY=change_me
+MOBILE_APP_KEY=change_me
 ```
 
-Chạy migration trong Supabase SQL Editor:
+Chạy migration (Neon SQL Editor hoặc `drizzle-kit push`):
 
-```txt
-supabase/migrations/001_initial_schema.sql
+```bash
+npx drizzle-kit push
 ```
 
 Chạy server:
@@ -119,78 +123,56 @@ Worker hiện có queue:
 
 ## 4. Auth
 
-Client login/register nhận `accessToken`. `src/lib/request.ts` sẽ tự gửi:
+Backend dùng **Clerk** để verify JWT. Client gửi:
 
 ```txt
-Authorization: Bearer <accessToken>
+Authorization: Bearer <clerk-access-token>
 ```
 
-Backend verify token bằng Supabase Auth, sau đó lấy `profiles`, `shop_members`, `shops`, `shop_licenses` bằng service role.
+Hoặc cookie `lumi_access_token` (Next.js web). React Native gửi thêm `x-app-key` header.
 
-## 5. License
+Clerk handle hoàn toàn register/login — backend không có `/api/auth/*` nữa.
 
-Khi register, backend tự tạo:
+## 5. Bootstrap
 
-- `profiles`
-- `shops`
-- `shop_members`
-- `shop_licenses` trial
-
-Client gọi `GET /api/me/bootstrap`, backend trả:
+Client gọi `GET /api/me/bootstrap` sau khi Clerk login, backend trả:
 
 ```json
 {
-  "user": {},
-  "profile": {},
-  "shopMember": {},
+  "userId": "user_2abc...",
   "shop": {},
   "license": {},
+  "tiktokChannels": [],
   "canUseApp": true,
   "reason": null
 }
 ```
 
-Nếu license hết hạn, các API nghiệp vụ trả `403` với message:
-
-```txt
-Shop đã hết hạn dùng thử hoặc chưa có license.
-```
+Nếu shop chưa tồn tại, backend tự tạo shop + trial license.
 
 ## 6. Payment
 
 Hiện payment đang để `manual` để không phụ thuộc cổng thanh toán.
-
-Tạo checkout:
 
 ```http
 POST /api/payments/checkout
 Authorization: Bearer <token>
 Content-Type: application/json
 
-{
-  "planCode": "basic",
-  "months": 1,
-  "amount": 199000
-}
+{ "planCode": "basic", "months": 1, "amount": 199000 }
 ```
-
-Sau khi nhận tiền thủ công, gọi:
 
 ```http
 POST /api/payments/manual-confirm
 Authorization: Bearer <token>
 Content-Type: application/json
 
-{
-  "paymentId": "uuid"
-}
+{ "paymentId": "uuid" }
 ```
-
-Endpoint này sẽ active license mới cho shop.
 
 ## 7. Ghi chú quan trọng
 
-- Không đưa `SUPABASE_SERVICE_ROLE_KEY` vào client.
 - Client Next.js chỉ cần `NEXT_PUBLIC_API_URL`.
+- Không expose `DATABASE_URL`, `CLERK_SECRET_KEY`, `NODE_INTERNAL_API_KEY` ra client.
 - Nếu deploy backend domain khác, cập nhật `CLIENT_ORIGIN` để CORS cho phép domain client.
-- Backend đang trả response dạng `{ ok: true, data }`, phù hợp với `request.ts` đã refactor vì file đó tự unwrap `data`.
+- Response chuẩn: `{ ok: true, data }` hoặc `{ ok: false, message }`.

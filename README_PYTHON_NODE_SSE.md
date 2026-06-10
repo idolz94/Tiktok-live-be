@@ -1,4 +1,4 @@
-# Python TikTok Collector -> Node.js Backend -> Supabase/Redis -> SSE -> Next.js
+# Python TikTok Collector -> Node.js Backend -> Neon/Redis -> SSE -> Next.js
 
 ## New backend endpoints
 
@@ -12,7 +12,7 @@ Header:
 x-internal-api-key: <NODE_INTERNAL_API_KEY>
 ```
 
-This route receives each comment from Python, resolves the shop, creates/gets the live session, saves the comment into Supabase, then broadcasts the `COMMENT` SSE event to connected clients of the same shop.
+This route receives each comment from Python, resolves the shop, creates/gets the live session, saves the comment into Neon Postgres, then broadcasts the `COMMENT` SSE event to connected clients of the same shop.
 
 ### Python -> Node internal live status
 
@@ -62,7 +62,7 @@ The internal ingest route maps Python comments to a shop by either:
 1. `shopId` sent in Python payload, or
 2. `shops.default_tiktok_username` matching `liveUsername`.
 
-Set this in Supabase:
+Set this via SQL (Neon SQL Editor or drizzle-kit):
 
 ```sql
 update public.shops

@@ -1,10 +1,12 @@
 import type { Request } from "express";
+import { eq, and } from "drizzle-orm";
+import { db } from "../lib/db.js";
+import { profiles, shops, shopMembers } from "../db/schema/index.js";
 import { forbidden, unauthorized } from "../lib/api-error.js";
-import { supabaseAdmin } from "../lib/supabase.js";
-import { getCurrentLicense, getLicenseState } from "./license.service.js";
+import { createTrialLicense, getCurrentLicense, getLicenseState } from "./license.service.js";
 
 export type AccountContext = {
-  user: NonNullable<Request["authUser"]>;
+  userId: string;
   profile: any | null;
   shopMember: any | null;
   shop: any | null;
@@ -14,46 +16,38 @@ export type AccountContext = {
 };
 
 export async function getAccountContext(request: Request): Promise<AccountContext> {
-  const user = request.authUser;
-  if (!user) throw unauthorized();
+  const userId = request.authUserId;
+  if (!userId) throw unauthorized();
 
-  const [{ data: profile, error: profileError }, { data: shopMember, error: memberError }] =
-    await Promise.all([
-      supabaseAdmin.from("profiles").select("*").eq("id", user.id).maybeSingle(),
-      supabaseAdmin
-        .from("shop_members")
-        .select("*")
-        .eq("user_id", user.id)
-        .eq("status", "active")
-        .order("created_at", { ascending: true })
-        .limit(1)
-        .maybeSingle(),
-    ]);
+  const [profileRows, memberRows] = await Promise.all([
+    db.select().from(profiles).where(eq(profiles.id, userId)).limit(1),
+    db
+      .select()
+      .from(shopMembers)
+      .where(and(eq(shopMembers.userId, userId), eq(shopMembers.status, "active")))
+      .orderBy(shopMembers.createdAt)
+      .limit(1),
+  ]);
 
-  if (profileError) throw new Error(profileError.message);
-  if (memberError) throw new Error(memberError.message);
+  const profile = profileRows[0] ?? null;
+  const shopMember = memberRows[0] ?? null;
 
-  if (!shopMember?.shop_id) {
-    return { user, profile, shopMember: null, shop: null, license: null, canUseApp: false, reason: "NO_SHOP" };
+  if (!shopMember?.shopId) {
+    return { userId, profile, shopMember: null, shop: null, license: null, canUseApp: false, reason: "NO_SHOP" };
   }
 
-  const { data: shop, error: shopError } = await supabaseAdmin
-    .from("shops")
-    .select("*")
-    .eq("id", shopMember.shop_id)
-    .maybeSingle();
-
-  if (shopError) throw new Error(shopError.message);
+  const shopRows = await db.select().from(shops).where(eq(shops.id, shopMember.shopId)).limit(1);
+  const shop = shopRows[0] ?? null;
 
   if (!shop) {
-    return { user, profile, shopMember, shop: null, license: null, canUseApp: false, reason: "NO_SHOP" };
+    return { userId, profile, shopMember, shop: null, license: null, canUseApp: false, reason: "NO_SHOP" };
   }
 
   const license = await getCurrentLicense(shop.id);
   const licenseState = getLicenseState(license);
 
   return {
-    user,
+    userId,
     profile,
     shopMember,
     shop,
@@ -63,23 +57,70 @@ export async function getAccountContext(request: Request): Promise<AccountContex
   };
 }
 
+export async function bootstrapAccountContext(request: Request): Promise<AccountContext> {
+  const userId = request.authUserId;
+  if (!userId) throw unauthorized();
+
+  const [profileRows, memberRows] = await Promise.all([
+    db.select().from(profiles).where(eq(profiles.id, userId)).limit(1),
+    db
+      .select()
+      .from(shopMembers)
+      .where(and(eq(shopMembers.userId, userId), eq(shopMembers.status, "active")))
+      .orderBy(shopMembers.createdAt)
+      .limit(1),
+  ]);
+
+  let profile = profileRows[0] ?? null;
+  let shopMember = memberRows[0] ?? null;
+
+  // Auto-provision profile if missing
+  if (!profile) {
+    const [created] = await db
+      .insert(profiles)
+      .values({ id: userId, fullName: null, email: null, phone: null })
+      .onConflictDoNothing()
+      .returning();
+    profile = created ?? (await db.select().from(profiles).where(eq(profiles.id, userId)).limit(1))[0] ?? null;
+  }
+
+  // Auto-provision shop + membership if missing
+  if (!shopMember?.shopId) {
+    const [newShop] = await db
+      .insert(shops)
+      .values({ ownerId: userId, name: "Shop mới" })
+      .returning();
+
+    const [newMember] = await db
+      .insert(shopMembers)
+      .values({ shopId: newShop.id, userId, role: "owner", status: "active" })
+      .returning();
+
+    shopMember = newMember;
+
+    // Auto-create trial license
+    await createTrialLicense(newShop.id);
+  }
+
+  // Re-fetch full context now that provisioning is done
+  return getAccountContext(request);
+}
+
 export async function requireShopId(request: Request): Promise<string> {
-  const user = request.authUser;
-  if (!user) throw unauthorized();
+  const userId = request.authUserId;
+  if (!userId) throw unauthorized();
 
-  const { data, error } = await supabaseAdmin
-    .from("shop_members")
-    .select("shop_id")
-    .eq("user_id", user.id)
-    .eq("status", "active")
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+  const rows = await db
+    .select({ shopId: shopMembers.shopId })
+    .from(shopMembers)
+    .where(and(eq(shopMembers.userId, userId), eq(shopMembers.status, "active")))
+    .orderBy(shopMembers.createdAt)
+    .limit(1);
 
-  if (error) throw new Error(error.message);
-  if (!data?.shop_id) throw forbidden("Không tìm thấy shop.");
+  const shopId = rows[0]?.shopId;
+  if (!shopId) throw forbidden("Không tìm thấy shop.");
 
-  return data.shop_id;
+  return shopId;
 }
 
 export async function requireAccountContext(request: Request) {

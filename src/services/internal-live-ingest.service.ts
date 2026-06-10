@@ -1,24 +1,17 @@
-import { supabaseAdmin } from "../lib/supabase.js";
+import { eq, or } from "drizzle-orm";
+import { db } from "../lib/db.js";
+import { shopMembers, shops } from "../db/schema/index.js";
 import { normalizeAtUsername } from "../utils/tiktok.js";
 import { saveLiveComment } from "./live-comments.service.js";
 import { findLiveSessionByExternalId, startLiveSession } from "./live-sessions.service.js";
 
-function normalizeUsername(value: string) {
-  return normalizeAtUsername(value || "");
-}
-
 export async function findShopOwnerUserId(shopId: string) {
-  const { data, error } = await supabaseAdmin
-    .from("shop_members")
-    .select("user_id")
-    .eq("shop_id", shopId)
-    .eq("status", "active")
-    .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
-
-  if (error) throw new Error(error.message);
-  return data?.user_id || null;
+  const rows = await db
+    .select({ userId: shopMembers.userId })
+    .from(shopMembers)
+    .where(eq(shopMembers.shopId, shopId))
+    .limit(1);
+  return rows[0]?.userId ?? null;
 }
 
 export async function resolveShopForCollectorEvent({
@@ -29,23 +22,28 @@ export async function resolveShopForCollectorEvent({
   liveUsername?: string | null;
 }) {
   if (shopId) {
-    const { data, error } = await supabaseAdmin.from("shops").select("*").eq("id", shopId).maybeSingle();
-    if (error) throw new Error(error.message);
-    if (data) return data;
+    const rows = await db.select().from(shops).where(eq(shops.id, shopId)).limit(1);
+    if (rows[0]) return rows[0];
   }
 
-  const username = normalizeUsername(String(liveUsername || ""));
+  const username = normalizeAtUsername(String(liveUsername || ""));
   if (!username) return null;
 
-  const { data, error } = await supabaseAdmin
-    .from("shops")
-    .select("*")
-    .or(`default_tiktok_username.eq.${username},default_tiktok_username.eq.${username.replace(/^@/, "")}`)
-    .limit(1)
-    .maybeSingle();
+  const withAt = username.startsWith("@") ? username : `@${username}`;
+  const withoutAt = username.replace(/^@/, "");
 
-  if (error) throw new Error(error.message);
-  return data || null;
+  const rows = await db
+    .select()
+    .from(shops)
+    .where(
+      or(
+        eq(shops.defaultTikTokUsername, withAt),
+        eq(shops.defaultTikTokUsername, withoutAt),
+      ),
+    )
+    .limit(1);
+
+  return rows[0] ?? null;
 }
 
 export async function ensureCollectorLiveSession({
@@ -107,9 +105,5 @@ export async function ingestCollectorComment({
     comment,
   });
 
-  return {
-    shop,
-    session,
-    comment: savedComment,
-  };
+  return { shop, session, comment: savedComment };
 }

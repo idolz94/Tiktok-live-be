@@ -173,7 +173,7 @@ router.post(
     }
 
     const payload = {
-      eventId: body.eventId || body.dedupKey || comment.external_comment_id || comment.id,
+      eventId: body.eventId || body.dedupKey || comment.externalCommentId || comment.id,
       eventType: "COMMENT",
       source: "node-live-ingest",
 
@@ -198,7 +198,7 @@ router.post(
       shopId: shop.id,
       liveSessionId: session.id,
       commentId: comment.id,
-      externalCommentId: comment.external_comment_id,
+      externalCommentId: comment.externalCommentId,
       sseClientCount,
     });
 
