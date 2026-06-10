@@ -42,6 +42,7 @@ const eventSchema = z.object({
   lastCommentAt: z.string().optional().nullable(),
 
   // USER_JOINED fields
+  nickname: z.string().optional().nullable(),
   joinUsername: z.string().optional().nullable(),
   joinDisplayName: z.string().optional().nullable(),
   joinAvatarUrl: z.string().optional().nullable(),
@@ -112,11 +113,14 @@ async function handleUserJoined(body: UserJoinedBody, response: any) {
     throw new Error(`Không tìm thấy shop cho TikTok username ${body.liveUsername}.`);
   }
 
+  const nickname = body.nickname || body.joinDisplayName || null;
+
   const payload = {
     shopId: shop.id,
     liveUsername: body.liveUsername,
+    nickname,
     joinUsername: body.joinUsername || null,
-    joinDisplayName: body.joinDisplayName || null,
+    joinDisplayName: body.joinDisplayName || nickname,
     joinAvatarUrl: body.joinAvatarUrl || null,
     createdAt,
   };
