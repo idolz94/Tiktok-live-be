@@ -58,9 +58,13 @@ router.post(
     void startPythonCollector({
       username: body.username,
       shopId: context.shop.id,
-    }).catch((error) => {
-      console.error("START_PYTHON_COLLECTOR_FAILED", error);
-    });
+    })
+      .then((result) => {
+        console.log("[PYTHON_START]", JSON.stringify(result));
+      })
+      .catch((error) => {
+        console.error("[PYTHON_START_FAILED]", error?.message || error);
+      });
 
     return mutateOk(response, "Đã gửi yêu cầu bắt đầu live stream.", {
       status: "starting",
@@ -78,6 +82,8 @@ router.post(
     const collector = await stopPythonCollector({
       username,
     });
+
+    console.log("[PYTHON_STOP]", JSON.stringify(collector));
 
     const session = await endRunningLiveSession({
       shopId: context.shop.id,

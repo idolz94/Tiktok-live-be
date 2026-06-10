@@ -29,6 +29,8 @@ async function callPythonCollector(path: string, body: Record<string, unknown>) 
     data = { message: text };
   }
 
+  console.log(`[PYTHON_COLLECTOR] ${path} HTTP ${response.status}`, JSON.stringify(data));
+
   if (!response.ok) {
     throw new Error(data?.message || `Python collector error ${response.status}`);
   }
