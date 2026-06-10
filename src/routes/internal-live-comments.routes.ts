@@ -158,13 +158,7 @@ router.post(
       rawPayload: body.rawPayload || body.comment?.rawPayload || body,
     };
 
-    const comment = await saveLiveComment({
-      shopId: shop.id,
-      liveSessionId: session.id,
-      comment: normalizedComment,
-    });
-
-    if (!comment) {
+    if (!normalizedComment.externalCommentId || !normalizedComment.liveSessionId) {
       return ok(response, {
         accepted: false,
         ignored: true,
@@ -172,8 +166,8 @@ router.post(
       });
     }
 
-    const payload = {
-      eventId: body.eventId || body.dedupKey || comment.externalCommentId || comment.id,
+    const realtimePayload = {
+      eventId: body.eventId || body.dedupKey || normalizedComment.externalCommentId || normalizedComment.id,
       eventType: "COMMENT",
       source: "node-live-ingest",
 
@@ -187,12 +181,27 @@ router.post(
 
       liveUsername: body.liveUsername,
 
-      comment,
+      comment: normalizedComment,
 
       createdAt,
     };
 
-    const sseClientCount = broadcastSseToShop(shop.id, "COMMENT", payload);
+    const sseClientCount = broadcastSseToShop(shop.id, "COMMENT", realtimePayload);
+
+    const comment = await saveLiveComment({
+      shopId: shop.id,
+      liveSessionId: session.id,
+      comment: normalizedComment,
+    });
+
+    if (!comment) {
+      return ok(response, {
+        accepted: false,
+        ignored: true,
+        reason: "Comment rỗng hoặc thiếu externalCommentId/liveSessionId.",
+        sseClientCount,
+      });
+    }
 
     await enqueueLiveEvent("comment-saved", {
       shopId: shop.id,
