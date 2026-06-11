@@ -55,20 +55,26 @@ router.post(
     const context = await requireUsableAccountContext(request);
     const body = usernameSchema.parse(request.body || {});
 
-    void startPythonCollector({
-      username: body.username,
-      shopId: context.shop.id,
-    })
-      .then((result) => {
-        console.log("[PYTHON_START]", JSON.stringify(result));
-      })
-      .catch((error) => {
-        console.error("[PYTHON_START_FAILED]", error?.message || error);
-      });
+    let pythonResult: any = null;
 
-    return mutateOk(response, "Đã gửi yêu cầu bắt đầu live stream.", {
+    try {
+      pythonResult = await startPythonCollector({
+        username: body.username,
+        shopId: context.shop.id,
+      });
+      console.log("[PYTHON_START]", JSON.stringify(pythonResult));
+    } catch (error: any) {
+      console.error("[PYTHON_START_FAILED]", error?.message || error);
+      return response.status(400).json({
+        ok: false,
+        message: error?.message || "Không thể kết nối TikTok live. Kiểm tra lại username hoặc tài khoản chưa live.",
+      });
+    }
+
+    return mutateOk(response, "Đã bắt đầu kết nối live stream.", {
       status: "starting",
       username: body.username,
+      collector: pythonResult,
     });
   }),
 );
