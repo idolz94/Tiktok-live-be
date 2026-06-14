@@ -8,6 +8,8 @@ import { env } from "./config/env.js";
 import { errorHandler, notFoundHandler } from "./middlewares/error.js";
 import authRoutes from "./routes/auth.routes.js";
 import customersRoutes from "./routes/customers.routes.js";
+import customerAddressesRoutes from "./routes/customer-addresses.routes.js";
+import shopAddressesRoutes from "./routes/shop-addresses.routes.js";
 import licenseRoutes from "./routes/license.routes.js";
 import internalLiveCommentsRoutes from "./routes/internal-live-comments.routes.js";
 import internalLiveEventsRoutes from "./routes/internal-live-events.routes.js";
@@ -17,6 +19,8 @@ import liveStreamRoutes from "./routes/live-stream.routes.js";
 import meRoutes from "./routes/me.routes.js";
 import ordersRoutes from "./routes/orders.routes.js";
 import paymentRoutes from "./routes/payment.routes.js";
+import shopSettingsRoutes from "./routes/shop-settings.routes.js";
+import productPresetsRoutes from "./routes/product-presets.routes.js";
 
 const allowedOrigins = env.clientOrigin
   .split(",")
@@ -69,6 +73,8 @@ export function createApp() {
   app.use("/api/me", meRoutes);
   app.use("/api/orders", ordersRoutes);
   app.use("/api/customers", customersRoutes);
+  app.use("/api/customers/:customerId/addresses", customerAddressesRoutes);
+  app.use("/api/me/shop-addresses", shopAddressesRoutes);
   app.use("/api/live-comments", liveCommentsRoutes);
   app.use("/api/live-sessions", liveSessionsRoutes);
   app.use("/api/live-stream", liveStreamRoutes);
@@ -78,6 +84,8 @@ export function createApp() {
   app.use("/api/internal/live-events", internalLiveEventsRoutes);
   app.use("/api/licenses", licenseRoutes);
   app.use("/api/payments", paymentRoutes);
+  app.use("/api/me/shop-settings", shopSettingsRoutes);
+  app.use("/api/me/product-presets", productPresetsRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

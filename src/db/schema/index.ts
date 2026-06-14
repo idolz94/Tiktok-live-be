@@ -146,14 +146,34 @@ export const customers = pgTable("customers", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// ─── shop_addresses ───────────────────────────────────────────────────────────
+export const shopAddresses = pgTable("shop_addresses", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
+  label: text("label"),
+  name: text("name"),
+  phone: text("phone"),
+  address: text("address"),
+  province: text("province"),
+  district: text("district"),
+  ward: text("ward"),
+  isDefault: boolean("is_default").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // ─── customer_addresses ───────────────────────────────────────────────────────
 export const customerAddresses = pgTable("customer_addresses", {
   id: uuid("id").primaryKey().defaultRandom(),
   customerId: uuid("customer_id").notNull().references(() => customers.id, { onDelete: "cascade" }),
   shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
   label: text("label"),
+  name: text("name"),
   phone: text("phone"),
   address: text("address"),
+  province: text("province"),
+  district: text("district"),
+  ward: text("ward"),
   isDefault: boolean("is_default").default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -165,14 +185,16 @@ export const orders = pgTable("orders", {
   shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
   liveSessionId: uuid("live_session_id").references(() => liveSessions.id),
   customerId: uuid("customer_id").references(() => customers.id),
-  liveCommentId: uuid("live_comment_id"), // set after liveComments insert
+  liveCommentId: uuid("live_comment_id"),
   orderCode: text("order_code"),
   source: text("source").default("live_comment"),
   customerName: text("customer_name"),
   customerTiktokUsername: text("customer_tiktok_username"),
   customerPhone: text("customer_phone"),
   customerAddress: text("customer_address"),
+  customerAddressId: uuid("customer_address_id").references(() => customerAddresses.id, { onDelete: "set null" }),
   commentText: text("comment_text"),
+  color: text("color"),
   status: text("status").default("draft"),
   depositStatus: text("deposit_status").default("unpaid"),
   paymentStatus: text("payment_status").default("unpaid"),
@@ -188,9 +210,12 @@ export const orders = pgTable("orders", {
   createdBy: text("created_by"),
   confirmedAt: timestamp("confirmed_at"),
   canceledAt: timestamp("canceled_at"),
+  providerCode: text("provider_code"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => ({
+  orderCodeUnique: uniqueIndex("orders_order_code_unique").on(table.orderCode),
+}));
 
 // ─── order_items ──────────────────────────────────────────────────────────────
 export const orderItems = pgTable("order_items", {
@@ -205,6 +230,24 @@ export const orderItems = pgTable("order_items", {
   quantity: integer("quantity").default(1),
   price: real("price").default(0),
   rawCommentText: text("raw_comment_text"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// ─── order_shipments ─────────────────────────────────────────────────────────
+export const orderShipments = pgTable("order_shipments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orderId: uuid("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
+  shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
+  providerCode: text("provider_code").notNull(),
+  trackingLabel: text("tracking_label"),
+  externalOrderId: text("external_order_id"),
+  fee: integer("fee"),
+  statusCode: text("status_code"),
+  submittedAt: timestamp("submitted_at"),
+  estimatedPickTime: text("estimated_pick_time"),
+  estimatedDeliverTime: text("estimated_deliver_time"),
+  rawResponse: jsonb("raw_response"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -281,6 +324,19 @@ export const shopShippingProviders = pgTable("shop_shipping_providers", {
   shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
   providerCode: text("provider_code").notNull().references(() => shippingProviders.code),
   isEnabled: boolean("is_enabled").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// ─── shop_product_presets ─────────────────────────────────────────────────────
+export const shopProductPresets = pgTable("shop_product_presets", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
+  code: text("code").notNull(),
+  name: text("name"),
+  color: text("color"),
+  price: integer("price").notNull().default(0),
+  sortOrder: integer("sort_order").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

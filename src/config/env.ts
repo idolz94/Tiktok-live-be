@@ -35,6 +35,11 @@ export const env = {
   // Optional control channel: Node.js Backend -> Python TikTok Collector
   pythonCollectorBaseUrl: readEnv("PYTHON_COLLECTOR_BASE_URL", "http://localhost:8765"),
   collectorControlApiKey: readEnv("COLLECTOR_CONTROL_API_KEY", "change_me"),
+
+  // GHTK shipping
+  ghtkApiBase: readEnv("OPEN_API_GHTK", "https://services-staging.ghtklab.com"),
+  ghtkApiToken: readEnv("API_TOKEN_GHTK"),
+  ghtkPartnerCode: readEnv("GHTK_PARTNER_CODE"),
 };
 
 export function assertRequiredEnv() {

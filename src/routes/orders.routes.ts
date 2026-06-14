@@ -8,11 +8,15 @@ import {
   addOrderItem,
   createOrderFromComment,
   deleteOrder,
+  getOrderForShop,
   listOrders,
   removeOrderItem,
+  submitOrderToGhtk,
   updateOrderDepositStatus,
   updateOrderStatus,
 } from "../services/orders.service.js";
+import { getGhtkToken, ghtkCancelOrder } from "../services/providers/ghtk.service.js";
+import { badRequest } from "../lib/api-error.js";
 
 const router = Router();
 
@@ -37,6 +41,30 @@ const orderItemSchema = z.object({
   productName: z.string().optional().default(""),
   price: z.number().min(0).default(0),
   quantity: z.number().int().positive().default(1),
+});
+
+const cancelShippingSchema = z.object({
+  trackingId: z.string().min(1).optional(),
+});
+
+const submitGhtkSchema = z.object({
+  pickName: z.string().min(1),
+  pickAddress: z.string().min(1),
+  pickProvince: z.string().min(1),
+  pickDistrict: z.string().min(1),
+  pickWard: z.string().optional(),
+  pickTel: z.string().min(1),
+  receiverName: z.string().min(1),
+  receiverAddress: z.string().min(1),
+  receiverProvince: z.string().min(1),
+  receiverDistrict: z.string().min(1),
+  receiverWard: z.string().min(1),
+  receiverHamlet: z.string().optional(),
+  receiverTel: z.string().min(1),
+  note: z.string().optional(),
+  isFreeShip: z.union([z.literal(0), z.literal(1)]).optional(),
+  transport: z.enum(["road", "fly"]).optional(),
+  pickOption: z.enum(["cod", "post"]).optional(),
 });
 
 router.use(requireAuth);
@@ -125,6 +153,42 @@ router.patch(
       status: body.status,
     });
     return mutateOk(response, "Cập nhật trạng thái đơn hàng thành công.", { order });
+  }),
+);
+
+router.post(
+  "/:orderId/shipping/submit",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const body = submitGhtkSchema.parse(request.body || {});
+
+    const result = await submitOrderToGhtk({
+      shopId: context.shop.id,
+      orderId: String(request.params.orderId),
+      ...body,
+    });
+
+    return mutateOk(response, "Đăng đơn GHTK thành công.", { shipping: result });
+  }),
+);
+
+router.post(
+  "/:orderId/shipping/cancel",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const body = cancelShippingSchema.parse(request.body || {});
+
+    const order = await getOrderForShop(String(request.params.orderId), context.shop.id);
+
+    const trackingId = body.trackingId ?? order.orderCode ?? "";
+    if (!trackingId) throw badRequest("Đơn hàng chưa có mã vận đơn để hủy.");
+
+    const token = await getGhtkToken(context.shop.id);
+    if (!token) throw badRequest("Shop chưa cấu hình token GHTK. Vui lòng vào cài đặt để thêm token.");
+
+    const result = await ghtkCancelOrder({ token, trackingId });
+
+    return mutateOk(response, "Hủy vận đơn GHTK thành công.", { logId: result.logId });
   }),
 );
 

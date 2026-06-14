@@ -1,5 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
+import { eq } from "drizzle-orm";
+import { db } from "../lib/db.js";
+import { orders, liveSessions } from "../db/schema/index.js";
 import { asyncHandler } from "../lib/async-handler.js";
 import { mutateCreated, mutateOk, ok } from "../lib/response.js";
 import { requireAuth } from "../middlewares/auth.js";
@@ -35,6 +38,17 @@ router.get(
       ? await listTikTokChannels(context.shop.id)
       : [];
 
+    let hasOrders = false;
+    let hasHistory = false;
+    if (context.shop?.id) {
+      const [orderRow, historyRow] = await Promise.all([
+        db.select({ id: orders.id }).from(orders).where(eq(orders.shopId, context.shop.id)).limit(1),
+        db.select({ id: liveSessions.id }).from(liveSessions).where(eq(liveSessions.shopId, context.shop.id)).limit(1),
+      ]);
+      hasOrders = orderRow.length > 0;
+      hasHistory = historyRow.length > 0;
+    }
+
     return ok(response, {
       userId: context.userId,
       profile: context.profile,
@@ -45,6 +59,8 @@ router.get(
       canUseApp: context.canUseApp,
       reason: context.reason,
       tiktokChannels,
+      hasOrders,
+      hasHistory,
     });
   }),
 );
@@ -54,7 +70,9 @@ router.get(
   "/tiktok-channels",
   requireAuth,
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
+    const context = await bootstrapAccountContext(request);
+    const shopId = context.shop?.id;
+    if (!shopId) return ok(response, { channels: [] });
     const channels = await listTikTokChannels(shopId);
     return ok(response, { channels });
   }),
@@ -65,7 +83,8 @@ router.post(
   "/tiktok-channels",
   requireAuth,
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
+    const context = await bootstrapAccountContext(request);
+    const shopId = context.shop!.id;
     const body = createChannelSchema.parse(request.body || {});
     const channel = await createTikTokChannel({
       shopId,
