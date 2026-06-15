@@ -21,6 +21,7 @@ import ordersRoutes from "./routes/orders.routes.js";
 import paymentRoutes from "./routes/payment.routes.js";
 import shopSettingsRoutes from "./routes/shop-settings.routes.js";
 import productPresetsRoutes from "./routes/product-presets.routes.js";
+import webhookGhtkRoutes from "./routes/webhook-ghtk.routes.js";
 
 const allowedOrigins = env.clientOrigin
   .split(",")
@@ -63,6 +64,10 @@ export function createApp() {
   app.use(express.json({ limit: "2mb" }));
   app.use(cookieParser());
   app.use(morgan(env.nodeEnv === "production" ? "combined" : "dev"));
+
+  // Registered before requireKnownClient — GHTK sends server-side POST without Origin header
+  app.use("/api/webhooks/ghtk", webhookGhtkRoutes);
+
   app.use(requireKnownClient);
 
   app.get("/health", (_request, response) => {

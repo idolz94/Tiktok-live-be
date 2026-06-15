@@ -1,7 +1,8 @@
 import { getCommentTikTokUsername } from "./tiktok.js";
+import { decodeTikTokEmoji } from "./tiktokEmoji.js";
 
 export function getCommentText(comment: any) {
-  return String(
+  const raw = String(
     comment?.commentText ||
       comment?.comment_text ||
       comment?.text ||
@@ -11,6 +12,7 @@ export function getCommentText(comment: any) {
       comment?.raw_text ||
       "",
   ).trim();
+  return decodeTikTokEmoji(raw);
 }
 
 export function getCommentDisplayName(comment: any) {

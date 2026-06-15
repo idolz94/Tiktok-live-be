@@ -93,22 +93,36 @@ export async function deleteProductPreset(shopId: string, presetId: string): Pro
     .where(and(eq(shopProductPresets.id, presetId), eq(shopProductPresets.shopId, shopId)));
 }
 
+function normalizeToken(s: string): string {
+  return s.toLowerCase().replace(/\s+/g, "").trim();
+}
+
 export async function matchPresetByComment(
   shopId: string,
   commentText: string,
 ): Promise<ProductPreset | null> {
   const presets = await listProductPresets(shopId);
+  console.log(`[matchPreset] shopId=${shopId} comment="${commentText}" presets=${JSON.stringify(presets.map(p => ({ code: p.code, price: p.price })))}`);
   if (!presets.length) return null;
 
-  const text = commentText.toLowerCase();
+  const text = commentText.toLowerCase().trim();
+  const textNoSpace = normalizeToken(commentText);
 
   for (const preset of presets) {
     const code = preset.code.trim().toLowerCase();
     if (!code) continue;
-    // Match if comment contains the code as a word boundary token
+
+    // 1. Exact or substring match (with spaces)
+    if (text === code || text.includes(code)) return preset;
+
+    // 2. Space-stripped match: "JBL5" matches preset "JBL 5"
+    const codeNoSpace = normalizeToken(preset.code);
+    if (codeNoSpace && (textNoSpace === codeNoSpace || textNoSpace.includes(codeNoSpace))) return preset;
+
+    // 3. Word-boundary regex (original logic)
     const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const regex = new RegExp(`(?:^|\\s|[#%])${escaped}(?:$|\\s|[^a-z0-9])`, "i");
-    if (regex.test(text) || text.includes(code)) return preset;
+    if (regex.test(text)) return preset;
   }
 
   return null;

@@ -9,11 +9,15 @@ import {
   createOrderFromComment,
   deleteOrder,
   getOrderForShop,
+  getShippingFee,
+  getShippingTracking,
   listOrders,
   removeOrderItem,
   submitOrderToGhtk,
+  updateOrder,
   updateOrderDepositStatus,
   updateOrderStatus,
+  updateOrderItem,
 } from "../services/orders.service.js";
 import { getGhtkToken, ghtkCancelOrder } from "../services/providers/ghtk.service.js";
 import { badRequest } from "../lib/api-error.js";
@@ -49,13 +53,13 @@ const cancelShippingSchema = z.object({
 
 const submitGhtkSchema = z.object({
   pickName: z.string().min(1),
-  pickAddress: z.string().min(1),
+  pickAddress: z.string().optional().default(""),
   pickProvince: z.string().min(1),
   pickDistrict: z.string().min(1),
   pickWard: z.string().optional(),
   pickTel: z.string().min(1),
   receiverName: z.string().min(1),
-  receiverAddress: z.string().min(1),
+  receiverAddress: z.string().optional().default(""),
   receiverProvince: z.string().min(1),
   receiverDistrict: z.string().min(1),
   receiverWard: z.string().min(1),
@@ -73,7 +77,8 @@ router.get(
   "/",
   asyncHandler(async (request, response) => {
     const context = await requireUsableAccountContext(request);
-    const orders = await listOrders(context.shop.id);
+    const shippingStatus = typeof request.query.shippingStatus === "string" ? request.query.shippingStatus : undefined;
+    const orders = await listOrders(context.shop.id, shippingStatus);
     return ok(response, { orders });
   }),
 );
@@ -143,6 +148,24 @@ router.delete(
 );
 
 router.patch(
+  "/:orderId/items/:itemId",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const body = orderItemSchema.parse(request.body || {});
+    const item = await updateOrderItem({
+      shopId: context.shop.id,
+      orderId: String(request.params.orderId),
+      itemId: String(request.params.itemId),
+      productCode: body.productCode,
+      productName: body.productName,
+      price: body.price,
+      quantity: body.quantity,
+    });
+    return mutateOk(response, "Cập nhật sản phẩm thành công.", { item });
+  }),
+);
+
+router.patch(
   "/:orderId/status",
   asyncHandler(async (request, response) => {
     const context = await requireUsableAccountContext(request);
@@ -153,6 +176,43 @@ router.patch(
       status: body.status,
     });
     return mutateOk(response, "Cập nhật trạng thái đơn hàng thành công.", { order });
+  }),
+);
+
+router.post(
+  "/:orderId/shipping/fee",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const b = request.body as Record<string, string | undefined>;
+
+    const result = await getShippingFee({
+      shopId: context.shop.id,
+      orderId: String(request.params.orderId),
+      pickProvince: b.pickProvince ?? "",
+      pickDistrict: b.pickDistrict ?? "",
+      pickWard: b.pickWard,
+      pickAddress: b.pickAddress,
+      receiverProvince: b.receiverProvince ?? "",
+      receiverDistrict: b.receiverDistrict ?? "",
+      receiverWard: b.receiverWard,
+      receiverAddress: b.receiverAddress,
+      weight: b.weight ? Number(b.weight) : undefined,
+      transport: b.transport === "fly" ? "fly" : b.transport === "road" ? "road" : undefined,
+    });
+
+    return ok(response, { fee: result });
+  }),
+);
+
+router.get(
+  "/:orderId/shipping/tracking",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const result = await getShippingTracking({
+      shopId: context.shop.id,
+      orderId: String(request.params.orderId),
+    });
+    return ok(response, { tracking: result });
   }),
 );
 
@@ -198,6 +258,30 @@ router.delete(
     const context = await requireUsableAccountContext(request);
     await deleteOrder({ shopId: context.shop.id, orderId: String(request.params.orderId) });
     return mutateOk(response, "Xóa đơn hàng thành công.", null);
+  }),
+);
+
+const patchOrderSchema = z.object({
+  customerAddressId: z.string().nullish(),
+  note: z.string().optional(),
+  color: z.string().nullish(),
+  codAmount: z.number().min(0).optional(),
+});
+
+router.patch(
+  "/:orderId",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const body = patchOrderSchema.parse(request.body || {});
+    const updated = await updateOrder({
+      shopId: context.shop.id,
+      orderId: String(request.params.orderId),
+      customerAddressId: body.customerAddressId,
+      note: body.note,
+      color: body.color,
+      codAmount: body.codAmount,
+    });
+    return mutateOk(response, "Cập nhật đơn hàng thành công.", { order: updated });
   }),
 );
 

@@ -9,7 +9,7 @@ import { findOrCreateCustomer, updateCustomerAfterOrder } from "./customer.servi
 import { findDbLiveCommentId, updateLiveCommentOrder } from "./live-comments.service.js";
 import { updateLiveSessionOrderCount } from "./live-sessions.service.js";
 import { matchPresetByComment } from "./product-presets.service.js";
-import { getGhtkToken, ghtkSubmitOrder } from "./providers/ghtk.service.js";
+import { getGhtkToken, ghtkSubmitOrder, ghtkGetFee, ghtkGetTracking } from "./providers/ghtk.service.js";
 import type { GhtkSubmitOrderParams } from "./providers/ghtk.service.js";
 
 async function generateUniqueOrderCode(): Promise<string> {
@@ -21,7 +21,7 @@ async function generateUniqueOrderCode(): Promise<string> {
   throw new Error("Failed to generate unique order code after 10 attempts");
 }
 
-const DEFAULT_PRICE = 20;
+const DEFAULT_PRICE = 20000;
 const DEFAULT_QUANTITY = 1;
 
 async function attachProducts<T extends { id: string; customerAddressId?: string | null }>(orderRows: T[]): Promise<(T & { products: any[]; shipment: any | null; customerAddressData: any | null })[]> {
@@ -63,11 +63,15 @@ async function attachProducts<T extends { id: string; customerAddressId?: string
   }));
 }
 
-export async function listOrders(shopId: string) {
+export async function listOrders(shopId: string, shippingStatus?: string) {
+  const condition = shippingStatus
+    ? and(eq(orders.shopId, shopId), eq(orders.shippingStatus, shippingStatus))
+    : eq(orders.shopId, shopId);
+
   const rows = await db
     .select()
     .from(orders)
-    .where(eq(orders.shopId, shopId))
+    .where(condition)
     .orderBy(sql`${orders.createdAt} desc`);
 
   return attachProducts(rows);
@@ -220,7 +224,13 @@ export async function updateOrderDepositStatus({
   await assertOrderInShop(orderId, shopId);
 
   const paymentStatus =
-    depositStatus === "paid" ? "paid" : depositStatus === "deposited" ? "partial" : "unpaid";
+    depositStatus === "paid"
+      ? "paid"
+      : depositStatus === "deposited"
+        ? "partial"
+        : depositStatus === "refunded"
+          ? "refunded"
+          : "unpaid";
 
   const [updated] = await db
     .update(orders)
@@ -265,6 +275,38 @@ export async function updateOrderStatus({
       : Promise.resolve([]),
   ]);
   return { ...updated, products: items, customerAddressData: addressRows[0] ?? null };
+}
+
+export async function updateOrder({
+  shopId,
+  orderId,
+  customerAddressId,
+  note,
+  color,
+  codAmount,
+}: {
+  shopId: string;
+  orderId: string;
+  customerAddressId?: string | null;
+  note?: string;
+  color?: string | null;
+  codAmount?: number;
+}) {
+  await assertOrderInShop(orderId, shopId);
+
+  const patch: Record<string, unknown> = { updatedAt: new Date() };
+  if (customerAddressId !== undefined) patch.customerAddressId = customerAddressId || null;
+  if (note !== undefined) patch.note = note;
+  if (color !== undefined) patch.color = color || null;
+  if (codAmount !== undefined) patch.codAmount = codAmount;
+
+  const [updated] = await db
+    .update(orders)
+    .set(patch)
+    .where(and(eq(orders.id, orderId), eq(orders.shopId, shopId)))
+    .returning();
+
+  return updated;
 }
 
 export async function deleteOrder({ shopId, orderId }: { shopId: string; orderId: string }) {
@@ -324,6 +366,54 @@ export async function addOrderItem({
   return item;
 }
 
+export async function updateOrderItem({
+  shopId,
+  orderId,
+  itemId,
+  productCode,
+  productName,
+  price,
+  quantity,
+}: {
+  shopId: string;
+  orderId: string;
+  itemId: string;
+  productCode?: string;
+  productName?: string;
+  price?: number;
+  quantity?: number;
+}) {
+  await assertOrderInShop(orderId, shopId);
+
+  const updates: Record<string, any> = { updatedAt: new Date() };
+  if (productCode !== undefined) updates.productCode = productCode;
+  if (productName !== undefined) updates.productName = productName;
+  if (price !== undefined && Number.isFinite(price) && price >= 0) updates.price = price;
+  if (quantity !== undefined && Number.isInteger(quantity) && quantity > 0) updates.quantity = quantity;
+
+  const [item] = await db
+    .update(orderItems)
+    .set(updates)
+    .where(and(eq(orderItems.id, itemId), eq(orderItems.orderId, orderId), eq(orderItems.shopId, shopId)))
+    .returning();
+
+  if (!item) throw notFound("Không tìm thấy sản phẩm trong đơn hàng.");
+
+  const allItems = await db
+    .select({ price: orderItems.price, quantity: orderItems.quantity })
+    .from(orderItems)
+    .where(eq(orderItems.orderId, orderId));
+
+  const subtotal = allItems.reduce((sum, i) => sum + (i.price ?? 0) * (i.quantity ?? 1), 0);
+
+  await db
+    .update(orders)
+    .set({ subtotalAmount: subtotal, updatedAt: new Date() })
+    .where(and(eq(orders.id, orderId), eq(orders.shopId, shopId)));
+
+  return item;
+}
+
 export async function removeOrderItem({
   shopId,
   orderId,
@@ -352,6 +442,43 @@ export async function removeOrderItem({
     .where(and(eq(orders.id, orderId), eq(orders.shopId, shopId)));
 
   return { ok: true };
+}
+
+export type GetShippingFeeParams = {
+  shopId: string;
+  orderId: string;
+  pickProvince: string;
+  pickDistrict: string;
+  pickWard?: string;
+  pickAddress?: string;
+  receiverProvince: string;
+  receiverDistrict: string;
+  receiverWard?: string;
+  receiverAddress?: string;
+  weight?: number;
+  transport?: "road" | "fly";
+};
+
+export async function getShippingFee(params: GetShippingFeeParams) {
+  const order = await assertOrderInShop(params.orderId, params.shopId);
+
+  const token = await getGhtkToken(params.shopId);
+  if (!token) throw badRequest("Shop chưa cấu hình token GHTK.");
+
+  return ghtkGetFee({
+    token,
+    pickProvince: params.pickProvince,
+    pickDistrict: params.pickDistrict,
+    pickWard: params.pickWard,
+    pickAddress: params.pickAddress,
+    province: params.receiverProvince,
+    district: params.receiverDistrict,
+    ward: params.receiverWard,
+    address: params.receiverAddress,
+    weight: params.weight ?? 300,
+    value: order.totalAmount ?? 0,
+    transport: params.transport,
+  });
 }
 
 export type SubmitShippingParams = {
@@ -401,20 +528,20 @@ export async function submitOrderToGhtk(params: SubmitShippingParams) {
     order: {
       id: order.orderCode ?? order.id,
       pickName: params.pickName,
-      pickAddress: params.pickAddress,
+      pickAddress: params.pickAddress || [params.pickWard, params.pickDistrict, params.pickProvince].filter(Boolean).join(", "),
       pickProvince: params.pickProvince,
       pickDistrict: params.pickDistrict,
       pickWard: params.pickWard,
       pickTel: params.pickTel,
       name: params.receiverName,
-      address: params.receiverAddress,
+      address: params.receiverAddress || [params.receiverWard, params.receiverDistrict, params.receiverProvince].filter(Boolean).join(", "),
       province: params.receiverProvince,
       district: params.receiverDistrict,
       ward: params.receiverWard,
       hamlet: params.receiverHamlet,
       tel: params.receiverTel,
       note: params.note ?? order.note ?? "",
-      pickMoney: order.codAmount ?? order.totalAmount ?? 0,
+      pickMoney: order.subtotalAmount ?? 0,
       value: order.totalAmount ?? 0,
       isFreeShip: params.isFreeShip ?? 0,
       transport: params.transport ?? "road",
@@ -452,4 +579,23 @@ export async function submitOrderToGhtk(params: SubmitShippingParams) {
     .where(and(eq(orders.id, params.orderId), eq(orders.shopId, params.shopId)));
 
   return { ...result, orderId: params.orderId };
+}
+
+export async function getShippingTracking(params: { shopId: string; orderId: string }) {
+  const order = await assertOrderInShop(params.orderId, params.shopId);
+
+  const shipmentRows = await db
+    .select()
+    .from(orderShipments)
+    .where(eq(orderShipments.orderId, params.orderId))
+    .limit(1);
+
+  const shipment = shipmentRows[0];
+  const trackingOrder = shipment?.trackingLabel ?? order.orderCode;
+  if (!trackingOrder) throw badRequest("Đơn hàng chưa có mã vận đơn để tra cứu.");
+
+  const token = await getGhtkToken(params.shopId);
+  if (!token) throw badRequest("Shop chưa cấu hình token GHTK.");
+
+  return ghtkGetTracking({ token, trackingOrder, partnerCode: undefined });
 }

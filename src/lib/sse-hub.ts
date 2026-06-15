@@ -12,7 +12,8 @@ export type SseEventName =
   | "COMMENT_SAVED"
   | "MESSAGE"
   | "USER_JOINED"
-  | "COLLECTOR_STOPPED";
+  | "COLLECTOR_STOPPED"
+  | "ORDER_SHIPPING_UPDATED";
 
 type SseClient = {
   id: string;
