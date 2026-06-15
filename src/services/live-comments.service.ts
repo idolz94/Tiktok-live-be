@@ -4,6 +4,7 @@ import { liveComments } from "../db/schema/index.js";
 import { getCommentAvatar, getCommentDisplayName, getCommentText, hasNumber } from "../utils/comment.js";
 import { getCommentTikTokUsername, normalizeAtUsername } from "../utils/tiktok.js";
 import { analyzeLiveCommentIntent } from "../utils/comment-intent.js";
+import { matchPresetByComment } from "./product-presets.service.js";
 import { updateLiveSessionCommentCount } from "./live-sessions.service.js";
 
 export async function saveLiveComment({
@@ -25,6 +26,15 @@ export async function saveLiveComment({
 
   const tiktokUsername = normalizeAtUsername(getCommentTikTokUsername(comment));
   const intentResult = analyzeLiveCommentIntent(commentText);
+
+  const matchedPreset = await matchPresetByComment(shopId, commentText);
+  if (matchedPreset) {
+    intentResult.intent = "buy";
+    intentResult.priorityLevel = "high";
+    intentResult.finalScore = 90;
+    intentResult.canCreateOrder = true;
+    intentResult.isPotentialBuyer = true;
+  }
 
   const payload = {
     shopId,
