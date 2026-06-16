@@ -102,7 +102,6 @@ export async function matchPresetByComment(
   commentText: string,
 ): Promise<ProductPreset | null> {
   const presets = await listProductPresets(shopId);
-  console.log(`[matchPreset] shopId=${shopId} comment="${commentText}" presets=${JSON.stringify(presets.map(p => ({ code: p.code, price: p.price })))}`);
   if (!presets.length) return null;
 
   const text = commentText.toLowerCase().trim();

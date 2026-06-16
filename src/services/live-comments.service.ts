@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { db } from "../lib/db.js";
 import { liveComments } from "../db/schema/index.js";
 import { getCommentAvatar, getCommentDisplayName, getCommentText, hasNumber } from "../utils/comment.js";
@@ -110,4 +110,21 @@ export async function updateLiveCommentOrder({
     .update(liveComments)
     .set({ isOrderCreated: true, orderId, updatedAt: new Date() })
     .where(eq(liveComments.id, commentId));
+}
+
+export async function getLiveSessionComments({
+  shopId,
+  liveSessionId,
+  limit = 200,
+}: {
+  shopId: string;
+  liveSessionId: string;
+  limit?: number;
+}) {
+  return db
+    .select()
+    .from(liveComments)
+    .where(and(eq(liveComments.shopId, shopId), eq(liveComments.liveSessionId, liveSessionId)))
+    .orderBy(desc(liveComments.createdAt))
+    .limit(limit);
 }

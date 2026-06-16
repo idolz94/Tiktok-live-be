@@ -13,7 +13,8 @@ export type SseEventName =
   | "MESSAGE"
   | "USER_JOINED"
   | "COLLECTOR_STOPPED"
-  | "ORDER_SHIPPING_UPDATED";
+  | "ORDER_SHIPPING_UPDATED"
+  | "VIEWER_COUNT_UPDATE";
 
 type SseClient = {
   id: string;
@@ -66,6 +67,7 @@ export function broadcastSseToShop(shopId: string, event: SseEventName, data: un
     }
   }
 
+  console.log(`[SSE] broadcast ${event} to shopId=${shopId} → ${sent} client(s)`);
   return sent;
 }
 

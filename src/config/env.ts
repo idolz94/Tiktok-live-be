@@ -26,15 +26,12 @@ export const env = {
   trialDays: readNumberEnv("TRIAL_DAYS", 365),
   defaultPlanCode: readEnv("DEFAULT_PLAN_CODE", "free"),
 
-  // Internal channel: Python TikTok Collector -> Node.js Backend
+  // Internal API key — used by tiktok-collector service (in-process) is not needed here,
+  // kept for any future external internal callers
   nodeInternalApiKey: readEnv("NODE_INTERNAL_API_KEY", "change_me"),
 
   // Mobile app key: React Native gửi header x-app-key để được phép gọi API
   mobileAppKey: readEnv("MOBILE_APP_KEY", "LUMI_APP_REACT_KEY"),
-
-  // Optional control channel: Node.js Backend -> Python TikTok Collector
-  pythonCollectorBaseUrl: readEnv("PYTHON_COLLECTOR_BASE_URL", "http://localhost:8765"),
-  collectorControlApiKey: readEnv("COLLECTOR_CONTROL_API_KEY", "change_me"),
 
   // GHTK shipping
   ghtkApiBase: readEnv("OPEN_API_GHTK", "https://services-staging.ghtklab.com"),

@@ -11,8 +11,6 @@ import customersRoutes from "./routes/customers.routes.js";
 import customerAddressesRoutes from "./routes/customer-addresses.routes.js";
 import shopAddressesRoutes from "./routes/shop-addresses.routes.js";
 import licenseRoutes from "./routes/license.routes.js";
-import internalLiveCommentsRoutes from "./routes/internal-live-comments.routes.js";
-import internalLiveEventsRoutes from "./routes/internal-live-events.routes.js";
 import liveCommentsRoutes from "./routes/live-comments.routes.js";
 import liveSessionsRoutes from "./routes/live-sessions.routes.js";
 import liveStreamRoutes from "./routes/live-stream.routes.js";
@@ -84,9 +82,6 @@ export function createApp() {
   app.use("/api/live-sessions", liveSessionsRoutes);
   app.use("/api/live-stream", liveStreamRoutes);
 
-  // Python TikTok Collector posts comments here. Protected by x-internal-api-key.
-  app.use("/api/internal/live-comments", internalLiveCommentsRoutes);
-  app.use("/api/internal/live-events", internalLiveEventsRoutes);
   app.use("/api/licenses", licenseRoutes);
   app.use("/api/payments", paymentRoutes);
   app.use("/api/me/shop-settings", shopSettingsRoutes);

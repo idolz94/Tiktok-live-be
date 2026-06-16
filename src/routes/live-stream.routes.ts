@@ -7,7 +7,8 @@ import { addSseClient, getSseStats } from "../lib/sse-hub.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { requireUsableAccountContext } from "../services/account.service.js";
 import { startPythonCollector, stopPythonCollector } from "../services/python-collector.service.js";
-import { endRunningLiveSession } from "../services/live-sessions.service.js";
+import { endRunningLiveSession, getRunningLiveSession } from "../services/live-sessions.service.js";
+import { getLiveSessionComments } from "../services/live-comments.service.js";
 
 const router = Router();
 
@@ -28,6 +29,8 @@ router.get(
     response.flushHeaders?.();
 
     const clientId = String(request.query.clientId || randomUUID());
+    console.log(`[SSE] client connected clientId=${clientId} shopId=${context.shop.id} userId=${context.userId}`);
+
     const removeClient = addSseClient({
       id: clientId,
       shopId: context.shop.id,
@@ -42,6 +45,7 @@ router.get(
     }, 25000);
 
     request.on("close", () => {
+      console.log(`[SSE] client disconnected clientId=${clientId} shopId=${context.shop.id}`);
       clearInterval(ping);
       removeClient();
     });
@@ -52,6 +56,7 @@ router.post(
   "/start",
   requireAuth,
   asyncHandler(async (request, response) => {
+    console.log("[LIVE-STREAM] POST /start hit — body:", JSON.stringify(request.body));
     const context = await requireUsableAccountContext(request);
     const body = usernameSchema.parse(request.body || {});
 
@@ -101,6 +106,27 @@ router.post(
       collector,
       session,
     });
+  }),
+);
+
+router.get(
+  "/running-session",
+  requireAuth,
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const session = await getRunningLiveSession({ shopId: context.shop.id });
+
+    if (!session) {
+      return ok(response, { session: null, comments: [] });
+    }
+
+    const comments = await getLiveSessionComments({
+      shopId: context.shop.id,
+      liveSessionId: session.id,
+    });
+
+    // Return oldest-first so the frontend can render in chronological order
+    return ok(response, { session, comments: comments.reverse() });
   }),
 );
 

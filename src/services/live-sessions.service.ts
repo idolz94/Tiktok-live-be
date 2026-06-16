@@ -400,3 +400,13 @@ export async function getLiveSessionHistory({ shopId, limit = 100 }: { shopId: s
     .orderBy(liveSessions.startedAt)
     .limit(limit);
 }
+
+export async function getRunningLiveSession({ shopId }: { shopId: string }) {
+  const rows = await db
+    .select()
+    .from(liveSessions)
+    .where(and(eq(liveSessions.shopId, shopId), eq(liveSessions.status, "running")))
+    .orderBy(liveSessions.startedAt)
+    .limit(1);
+  return rows[0] ?? null;
+}

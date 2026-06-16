@@ -1,44 +1,10 @@
-import { env } from "../config/env.js";
+import {
+  listTikTokCollectors,
+  startTikTokCollector,
+  stopTikTokCollector,
+} from "./tiktok-collector.service.js";
 
-async function callPythonCollector(path: string, body: Record<string, unknown>) {
-  if (!env.pythonCollectorBaseUrl) {
-    return {
-      ok: false,
-      skipped: true,
-      message: "PYTHON_COLLECTOR_BASE_URL chưa được cấu hình.",
-    };
-  }
-
-  const url = `${env.pythonCollectorBaseUrl.replace(/\/$/, "")}${path}`;
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-collector-api-key": env.collectorControlApiKey,
-    },
-    body: JSON.stringify(body),
-  });
-
-  const text = await response.text();
-  let data: any = null;
-
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = { message: text };
-  }
-
-  console.log(`[PYTHON_COLLECTOR] ${path} HTTP ${response.status}`, JSON.stringify(data));
-
-  if (!response.ok) {
-    throw new Error(data?.message || `Python collector error ${response.status}`);
-  }
-
-  return data;
-}
-
-export function startPythonCollector({
+export async function startPythonCollector({
   username,
   shopId,
   liveSessionId,
@@ -47,13 +13,18 @@ export function startPythonCollector({
   shopId: string;
   liveSessionId?: string | null;
 }) {
-  return callPythonCollector("/collectors/start", {
-    username,
-    shopId,
-    liveSessionId: liveSessionId || undefined,
-  });
+  return startTikTokCollector({ username, shopId, liveSessionId });
 }
 
-export function stopPythonCollector({ username }: { username: string; shopId?: string }) {
-  return callPythonCollector("/collectors/stop", { username });
+export async function stopPythonCollector({
+  username,
+}: {
+  username: string;
+  shopId?: string;
+}) {
+  return stopTikTokCollector({ username });
+}
+
+export function getPythonCollectors() {
+  return listTikTokCollectors();
 }
