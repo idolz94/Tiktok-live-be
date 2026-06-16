@@ -18,11 +18,13 @@ export async function startPythonCollector({
 
 export async function stopPythonCollector({
   username,
+  silent,
 }: {
   username: string;
   shopId?: string;
+  silent?: boolean;
 }) {
-  return stopTikTokCollector({ username });
+  return stopTikTokCollector({ username, silent });
 }
 
 export function getPythonCollectors() {

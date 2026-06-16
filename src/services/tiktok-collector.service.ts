@@ -255,7 +255,7 @@ async function onError(room: RoomState, message: string) {
   } catch {}
 }
 
-async function onCollectorStopped(room: RoomState) {
+async function onCollectorStopped(room: RoomState, options?: { silent?: boolean }) {
   const endedAt = nowIso();
   const result = await ingestLiveEvent(room, "COLLECTOR_STOPPED");
   if (!result) return;
@@ -289,7 +289,9 @@ async function onCollectorStopped(room: RoomState) {
     commentCount: room.commentCount,
   };
 
-  broadcastSseToShop(result.shopId, "COLLECTOR_STOPPED", payload);
+  if (!options?.silent) {
+    broadcastSseToShop(result.shopId, "COLLECTOR_STOPPED", payload);
+  }
   await enqueueLiveEvent("collector-stopped", payload);
 }
 
@@ -448,6 +450,29 @@ export async function startTikTokCollector({
     room.isRunning = false;
     room.lastError = message;
     rooms.delete(normalized);
+
+    if (room.shopId) {
+      const isOffline =
+        message.toLowerCase().includes("online") ||
+        message.toLowerCase().includes("offline");
+      const friendlyMessage = isOffline ? "TikTok chưa bật live" : message;
+      const createdAt = nowIso();
+      broadcastSseToShop(room.shopId, "LIVE_ERROR", {
+        shopId: room.shopId,
+        liveSessionId: null,
+        live_session_id: null,
+        collectorSessionId: room.collectorSessionId,
+        liveUsername: room.username,
+        message: friendlyMessage,
+        reason: "connect_failed",
+        shouldStop: true,
+        retry: false,
+        createdAt,
+        endedAt: createdAt,
+        status: "ended",
+        durationSeconds: 0,
+      });
+    }
   });
 
   return {
@@ -458,7 +483,13 @@ export async function startTikTokCollector({
   };
 }
 
-export async function stopTikTokCollector({ username }: { username: string }) {
+export async function stopTikTokCollector({
+  username,
+  silent,
+}: {
+  username: string;
+  silent?: boolean;
+}) {
   const normalized = username.replace(/^@/, "").trim().toLowerCase();
   const room = rooms.get(normalized);
 
@@ -469,7 +500,12 @@ export async function stopTikTokCollector({ username }: { username: string }) {
   room.isStopping = true;
   room.isRunning = false;
 
-  await onCollectorStopped(room);
+  if (silent) {
+    // Return immediately; run DB cleanup in background without broadcasting SSE.
+    onCollectorStopped(room, { silent: true }).catch(() => {});
+  } else {
+    await onCollectorStopped(room);
+  }
 
   try {
     room.connection?.disconnect?.();

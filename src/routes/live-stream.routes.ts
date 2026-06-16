@@ -89,18 +89,23 @@ router.post(
   asyncHandler(async (request, response) => {
     const context = await requireUsableAccountContext(request);
     const username = String(request.body?.username || "").trim();
+    const silent = Boolean(request.body?.silent);
 
     const collector = await stopPythonCollector({
       username,
+      silent,
     });
 
     console.log("[PYTHON_STOP]", JSON.stringify(collector));
 
-    const session = await endRunningLiveSession({
-      shopId: context.shop.id,
-      tiktokUsername: username,
-      reason: "manual_stop",
-    });
+    let session = null;
+    if (!silent) {
+      session = await endRunningLiveSession({
+        shopId: context.shop.id,
+        tiktokUsername: username,
+        reason: "manual_stop",
+      });
+    }
 
     return mutateOk(response, "Đã gửi yêu cầu dừng live stream.", {
       collector,
