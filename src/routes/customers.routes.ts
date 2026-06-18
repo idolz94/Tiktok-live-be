@@ -1,10 +1,10 @@
 import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../lib/async-handler.js";
-import { mutateOk } from "../lib/response.js";
+import { mutateOk, ok } from "../lib/response.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { requireShopId } from "../services/account.service.js";
-import { updateCustomerProfile } from "../services/customer.service.js";
+import { getCustomerById, updateCustomerProfile } from "../services/customer.service.js";
 
 const router = Router();
 
@@ -16,6 +16,18 @@ const updateCustomerSchema = z.object({
 });
 
 router.use(requireAuth);
+
+router.get(
+  "/:customerId",
+  asyncHandler(async (request, response) => {
+    const shopId = await requireShopId(request);
+    const customer = await getCustomerById({
+      shopId,
+      customerId: String(request.params.customerId),
+    });
+    return ok(response, { customer });
+  }),
+);
 
 router.patch(
   "/:customerId",

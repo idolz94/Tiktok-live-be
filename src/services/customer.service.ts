@@ -42,6 +42,23 @@ export async function findOrCreateCustomer({
   return newCustomer;
 }
 
+export async function getCustomerById({
+  shopId,
+  customerId,
+}: {
+  shopId: string;
+  customerId: string;
+}) {
+  const rows = await db
+    .select()
+    .from(customers)
+    .where(and(eq(customers.id, customerId), eq(customers.shopId, shopId)))
+    .limit(1);
+  const customer = rows[0];
+  if (!customer) throw notFound("Không tìm thấy khách hàng.");
+  return customer;
+}
+
 export async function updateCustomerAfterOrder({
   customerId,
   totalAmount,
