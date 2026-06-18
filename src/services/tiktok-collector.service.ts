@@ -68,7 +68,7 @@ async function ingestComment(room: RoomState, data: any) {
     externalCommentId,
     shopId: shop.id,
     liveSessionId: session.id,
-    tiktokUsername: uniqueId,
+    tiktokUsername: uniqueId.replace(/^@/, ""),
     displayName: nickname,
     avatarUrl,
     commentText,
@@ -85,6 +85,7 @@ async function ingestComment(room: RoomState, data: any) {
     shopId: shop.id,
     liveSessionId: session.id,
     comment: commentPayload,
+    liveUsername: room.username,
   });
 
   if (!comment) return;
@@ -97,7 +98,7 @@ async function ingestComment(room: RoomState, data: any) {
     liveSessionId: session.id,
     live_session_id: session.id,
     collectorSessionId: room.collectorSessionId,
-    liveUsername: room.username,
+    liveUsername: room.username.replace(/^@/, ""),
     comment: {
       ...commentPayload,
       intent: comment.intent,

@@ -6,7 +6,8 @@ export type CommentIntent =
   | "ask_product"
   | "ask_how_to_buy"
   | "normal"
-  | "spam";
+  | "spam"
+  | "user";
 
 export type PriorityLevel = "high" | "medium" | "low" | "normal";
 

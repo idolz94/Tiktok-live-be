@@ -11,10 +11,12 @@ export async function saveLiveComment({
   shopId,
   liveSessionId,
   comment,
+  liveUsername,
 }: {
   shopId: string;
   liveSessionId: string;
   comment: any;
+  liveUsername?: string;
 }) {
   if (!liveSessionId) return null;
 
@@ -34,6 +36,15 @@ export async function saveLiveComment({
     intentResult.finalScore = 90;
     intentResult.canCreateOrder = true;
     intentResult.isPotentialBuyer = true;
+  }
+
+  const normalizedLiveUser = liveUsername ? normalizeAtUsername(liveUsername) : "";
+  if (normalizedLiveUser && tiktokUsername === normalizedLiveUser) {
+    intentResult.intent = "user";
+    intentResult.priorityLevel = "normal";
+    intentResult.finalScore = 0;
+    intentResult.canCreateOrder = false;
+    intentResult.isPotentialBuyer = false;
   }
 
   const payload = {

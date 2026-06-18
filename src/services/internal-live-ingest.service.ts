@@ -103,6 +103,7 @@ export async function ingestCollectorComment({
     shopId: shop.id,
     liveSessionId: session.id,
     comment,
+    liveUsername,
   });
 
   return { shop, session, comment: savedComment };

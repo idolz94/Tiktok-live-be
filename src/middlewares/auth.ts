@@ -15,18 +15,50 @@ function getBearerToken(request: Request) {
   return "";
 }
 
-export async function requireAuth(request: Request, _response: Response, next: NextFunction) {
+function getAuthorizedParties(): string[] {
+  const parties = [
+    env.clientOrigin,
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+  ];
+  // clientOrigin có thể là comma-separated list
+  const fromEnv = env.clientOrigin
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return [...new Set([...fromEnv, ...parties])];
+}
+
+export async function requireAuth(
+  request: Request,
+  _response: Response,
+  next: NextFunction,
+) {
   try {
     const token = getBearerToken(request);
-    if (!token) throw unauthorized();
 
-    const payload = await verifyToken(token, { secretKey: env.clerkSecretKey });
-    if (!payload?.sub) throw unauthorized("Phiên đăng nhập không hợp lệ.");
+    if (!token) {
+      throw unauthorized();
+    }
+
+    const payload = await verifyToken(token, {
+      secretKey: env.clerkSecretKey,
+      authorizedParties: getAuthorizedParties(),
+    });
+
+    if (!payload?.sub) {
+      throw unauthorized("Phiên đăng nhập không hợp lệ.");
+    }
 
     request.authToken = token;
     request.authUserId = payload.sub;
+
     next();
-  } catch {
-    next(unauthorized("Phiên đăng nhập không hợp lệ."));
+  } catch (error) {
+    console.error("[Clerk verifyToken failed]", error);
+
+    next(
+      unauthorized("Phiên đăng nhập không hợp lệ."),
+    );
   }
 }
