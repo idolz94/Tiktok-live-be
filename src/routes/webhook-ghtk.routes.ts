@@ -4,16 +4,23 @@ import { eq } from "drizzle-orm";
 import { db } from "../lib/db.js";
 import { orderShipments, orders } from "../db/schema/index.js";
 import { broadcastSseToShop } from "../lib/sse-hub.js";
+import { getShippingProviderAdapter } from "../services/providers/registry.js";
 
 const router = Router();
 
 router.use(express.urlencoded({ extended: false }));
 
-function mapStatusIdToShippingStatus(statusId: number): string {
-  if (statusId === -1) return "cancelled";
-  if (statusId === 5 || statusId === 6) return "delivered";
-  if (statusId === 9 || statusId === 20 || statusId === 21) return "returned";
-  return "submitted";
+function mapWebhookStatus(statusId: number) {
+  return getShippingProviderAdapter("ghtk").normalizeWebhookStatus?.({ statusId }) ?? {
+    providerCode: "ghtk" as const,
+    shippingStatus: "submitted",
+    statusCode: String(statusId),
+    statusRaw: String(statusId),
+  };
+}
+
+function mapStatusIdToShippingStatus(statusId: number) {
+  return mapWebhookStatus(statusId).shippingStatus;
 }
 
 router.post("/", async (req, res) => {

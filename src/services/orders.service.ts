@@ -3,15 +3,14 @@ import { db } from "../lib/db.js";
 import { orders, orderItems, orderShipments, customerAddresses } from "../db/schema/index.js";
 import { badRequest, notFound } from "../lib/api-error.js";
 import { getCommentAvatar, getCommentDisplayName, getCommentText } from "../utils/comment.js";
-import { createOrderCode, isUuid } from "../utils/id.js";
+import { createOrderCode } from "../utils/id.js";
 import { getCommentTikTokUsername } from "../utils/tiktok.js";
 import { findOrCreateCustomer, updateCustomerAfterOrder } from "./customer.service.js";
 import { findDbLiveCommentId, updateLiveCommentOrder } from "./live-comments.service.js";
 import { updateLiveSessionOrderCount } from "./live-sessions.service.js";
 import { matchPresetByComment } from "./product-presets.service.js";
-import { getGhtkToken, ghtkSubmitOrder, ghtkGetFee, ghtkGetTracking } from "./providers/ghtk.service.js";
-import type { GhtkSubmitOrderParams } from "./providers/ghtk.service.js";
 import { getCurrentLicense } from "./license.service.js";
+import { getShippingProviderAdapter, normalizeShippingProviderCode } from "./providers/registry.js";
 
 async function assertOrderLimitNotExceeded(shopId: string) {
   const license = await getCurrentLicense(shopId);
@@ -120,20 +119,17 @@ export async function createOrderFromComment({
   await assertOrderLimitNotExceeded(shopId);
 
   const commentText = getCommentText(comment);
-  const customerTikTokUsername = getCommentTikTokUsername(comment);
+  const customerTiktokUsername = getCommentTikTokUsername(comment);
   const displayName = getCommentDisplayName(comment);
   const avatarUrl = getCommentAvatar(comment);
 
   if (!commentText) throw badRequest("Comment không có nội dung để tạo đơn.");
 
   const preset = await matchPresetByComment(shopId, commentText);
-
-  const safePrice = preset
-    ? preset.price
-    : Number.isFinite(Number(price)) ? Number(price) : DEFAULT_PRICE;
+  const safePrice = preset ? preset.price : Number.isFinite(Number(price)) ? Number(price) : DEFAULT_PRICE;
   const safeQuantity = Number.isFinite(Number(quantity)) ? Number(quantity) : DEFAULT_QUANTITY;
 
-  const customer = await findOrCreateCustomer({ shopId, tiktokUsername: customerTikTokUsername, displayName, avatarUrl });
+  const customer = await findOrCreateCustomer({ shopId, tiktokUsername: customerTiktokUsername, displayName, avatarUrl });
 
   const defaultAddress = customer?.id
     ? await db
@@ -147,19 +143,18 @@ export async function createOrderFromComment({
   const subtotalAmount = safePrice * safeQuantity;
   const totalAmount = subtotalAmount;
   const liveCommentId = await findDbLiveCommentId({ shopId, comment });
-  const dbLiveSessionId = isUuid(liveSessionId) ? liveSessionId : null;
 
   const [order] = await db
     .insert(orders)
     .values({
       shopId,
       customerId: customer?.id ?? null,
-      liveSessionId: dbLiveSessionId as string | undefined,
-      liveCommentId: liveCommentId as string | undefined,
+      liveSessionId: liveSessionId ?? null,
+      liveCommentId: liveCommentId ?? null,
       orderCode: await generateUniqueOrderCode(),
       source: "live_comment",
       customerName: displayName,
-      customerTiktokUsername: customerTikTokUsername,
+      customerTiktokUsername,
       customerPhone: "",
       customerAddress: "",
       customerAvatarUrl: avatarUrl ?? null,
@@ -196,7 +191,7 @@ export async function createOrderFromComment({
 
   void Promise.all([
     updateLiveCommentOrder({ commentId: liveCommentId, orderId: order.id }),
-    updateLiveSessionOrderCount(dbLiveSessionId),
+    updateLiveSessionOrderCount(liveSessionId ?? null),
     updateCustomerAfterOrder({ customerId: customer?.id ?? null, totalAmount }),
   ]).catch((err) => {
     console.error("CREATE_ORDER_FROM_COMMENT_SIDE_EFFECT_FAILED", err);
@@ -221,6 +216,24 @@ async function assertOrderInShop(orderId: string, shopId: string) {
   const row = rows[0];
   if (!row) throw notFound("Không tìm thấy đơn hàng.");
   return row;
+}
+
+export async function __getOrderForShipping(orderId: string, shopId: string) {
+  const order = await assertOrderInShop(orderId, shopId);
+  const [shipmentRows, addressRows, items] = await Promise.all([
+    db.select().from(orderShipments).where(eq(orderShipments.orderId, orderId)).limit(1),
+    order.customerAddressId
+      ? db.select().from(customerAddresses).where(eq(customerAddresses.id, order.customerAddressId)).limit(1)
+      : Promise.resolve([]),
+    db.select().from(orderItems).where(eq(orderItems.orderId, orderId)),
+  ]);
+
+  return {
+    ...order,
+    shipment: shipmentRows[0] ?? null,
+    customerAddressData: addressRows[0] ?? null,
+    items,
+  };
 }
 
 export async function getOrderForShop(orderId: string, shopId: string) {
@@ -486,23 +499,21 @@ export type GetShippingFeeParams = {
 };
 
 export async function getShippingFee(params: GetShippingFeeParams) {
-  const order = await assertOrderInShop(params.orderId, params.shopId);
+  await assertOrderInShop(params.orderId, params.shopId);
+  const provider = getShippingProviderAdapter("ghtk");
 
-  const token = await getGhtkToken(params.shopId);
-  if (!token) throw badRequest("Shop chưa cấu hình token GHTK.");
-
-  return ghtkGetFee({
-    token,
+  return provider.getFee({
+    shopId: params.shopId,
+    orderId: params.orderId,
     pickProvince: params.pickProvince,
     pickDistrict: params.pickDistrict,
     pickWard: params.pickWard,
     pickAddress: params.pickAddress,
-    province: params.receiverProvince,
-    district: params.receiverDistrict,
-    ward: params.receiverWard,
-    address: params.receiverAddress,
-    weight: params.weight ?? 300,
-    value: order.totalAmount ?? 0,
+    receiverProvince: params.receiverProvince,
+    receiverDistrict: params.receiverDistrict,
+    receiverWard: params.receiverWard,
+    receiverAddress: params.receiverAddress,
+    weight: params.weight,
     transport: params.transport,
   });
 }
@@ -530,86 +541,50 @@ export type SubmitShippingParams = {
 };
 
 export async function submitOrderToGhtk(params: SubmitShippingParams) {
-  const order = await assertOrderInShop(params.orderId, params.shopId);
+  await assertOrderInShop(params.orderId, params.shopId);
+  const provider = getShippingProviderAdapter("ghtk");
+  const result = await provider.submit(params);
 
-  const token = await getGhtkToken(params.shopId);
-  if (!token) {
-    throw badRequest("Shop chưa cấu hình token GHTK. Vui lòng vào cài đặt để thêm token.");
-  }
-
-  const items = await db.select().from(orderItems).where(eq(orderItems.orderId, params.orderId));
-  if (!items.length) {
-    throw badRequest("Đơn hàng chưa có sản phẩm để đăng lên GHTK.");
-  }
-
-  const ghtkProducts = items.map((item) => ({
-    name: item.productName ?? item.productCode ?? "Sản phẩm",
-    weight: 0.3,
-    quantity: item.quantity ?? 1,
-    product_code: item.productCode ?? undefined,
-  }));
-
-  const submitParams: GhtkSubmitOrderParams = {
-    token,
-    order: {
-      id: order.orderCode ?? order.id,
-      pickName: params.pickName,
-      pickAddress: params.pickAddress || [params.pickWard, params.pickDistrict, params.pickProvince].filter(Boolean).join(", "),
-      pickProvince: params.pickProvince,
-      pickDistrict: params.pickDistrict,
-      pickWard: params.pickWard,
-      pickTel: params.pickTel,
-      name: params.receiverName,
-      address: params.receiverAddress || [params.receiverWard, params.receiverDistrict, params.receiverProvince].filter(Boolean).join(", "),
-      province: params.receiverProvince,
-      district: params.receiverDistrict,
-      ward: params.receiverWard,
-      hamlet: params.receiverHamlet,
-      tel: params.receiverTel,
-      note: params.note ?? order.note ?? "",
-      pickMoney: order.subtotalAmount ?? 0,
-      value: order.totalAmount ?? 0,
-      isFreeShip: params.isFreeShip ?? 0,
-      transport: params.transport ?? "road",
-      pickOption: params.pickOption ?? "cod",
-    },
-    products: ghtkProducts,
+  const patch: Record<string, unknown> = {
+    providerCode: result.providerCode,
+    shippingFee: result.fee ?? undefined,
+    shippingStatus: result.status ?? "submitted",
+    updatedAt: new Date(),
   };
+  if (result.labelPaperSize !== undefined) patch["labelPaperSize"] = result.labelPaperSize;
 
-  const result = await ghtkSubmitOrder(submitParams);
-
-  // Write into order_shipments (polymorphic)
   await db.insert(orderShipments).values({
     orderId: params.orderId,
     shopId: params.shopId,
-    providerCode: "GHTK",
-    trackingLabel: result.label,
-    externalOrderId: String(result.trackingId),
-    fee: result.fee,
-    statusCode: String(result.statusId),
+    providerCode: result.providerCode.toUpperCase(),
+    trackingLabel: result.trackingLabel,
+    trackingCode: result.trackingCode ?? null,
+    externalOrderId: result.externalOrderId ?? null,
+    fee: result.fee ?? null,
+    shippingFee: result.fee ?? null,
+    status: result.status ?? "submitted",
+    statusCode: result.statusCode ?? null,
+    statusRaw: result.statusRaw ?? null,
     submittedAt: new Date(),
     estimatedPickTime: result.estimatedPickTime ?? null,
     estimatedDeliverTime: result.estimatedDeliverTime ?? null,
-    rawResponse: result as unknown as Record<string, unknown>,
+    labelUrl: result.labelUrl ?? null,
+    labelFormat: result.labelFormat ?? null,
+    labelPaperSize: result.labelPaperSize ?? null,
+    paymentSide: result.paymentSide ?? null,
+    rawResponse: result.rawResponse as Record<string, unknown> | null,
   });
 
-  // Update order-level fields
   await db
     .update(orders)
-    .set({
-      providerCode: "GHTK",
-      shippingFee: result.fee,
-      shippingStatus: "submitted",
-      updatedAt: new Date(),
-    })
+    .set(patch)
     .where(and(eq(orders.id, params.orderId), eq(orders.shopId, params.shopId)));
 
   return { ...result, orderId: params.orderId };
 }
 
 export async function getShippingTracking(params: { shopId: string; orderId: string }) {
-  const order = await assertOrderInShop(params.orderId, params.shopId);
-
+  await assertOrderInShop(params.orderId, params.shopId);
   const shipmentRows = await db
     .select()
     .from(orderShipments)
@@ -617,23 +592,21 @@ export async function getShippingTracking(params: { shopId: string; orderId: str
     .limit(1);
 
   const shipment = shipmentRows[0];
+  if (!shipment) throw badRequest("Đơn hàng chưa có vận đơn để tra cứu.");
 
-  if (shipment?.providerCode === "MANUAL") {
+  const providerCode = normalizeShippingProviderCode(shipment.providerCode);
+  if (providerCode === "manual") {
     return {
-      provider: "MANUAL",
-      trackingCode: shipment.trackingLabel ?? null,
-      submittedAt: shipment.submittedAt ?? null,
-      fee: shipment.fee ?? null,
+      providerCode: "manual",
+      trackingCode: shipment.trackingLabel ?? shipment.trackingCode ?? null,
+      status: shipment.status ?? "submitted",
+      statusCode: shipment.statusCode ?? null,
+      raw: shipment.rawResponse ?? null,
     };
   }
 
-  const trackingOrder = shipment?.trackingLabel ?? order.orderCode;
-  if (!trackingOrder) throw badRequest("Đơn hàng chưa có mã vận đơn để tra cứu.");
-
-  const token = await getGhtkToken(params.shopId);
-  if (!token) throw badRequest("Shop chưa cấu hình token GHTK.");
-
-  return ghtkGetTracking({ token, trackingOrder, partnerCode: undefined });
+  const provider = getShippingProviderAdapter(providerCode);
+  return provider.tracking({ shopId: params.shopId, orderId: params.orderId });
 }
 
 export type SubmitManualShippingParams = {
@@ -668,8 +641,11 @@ export async function submitManualShipping(params: SubmitManualShippingParams) {
     shopId: params.shopId,
     providerCode: "MANUAL",
     trackingLabel: params.trackingCode,
+    trackingCode: params.trackingCode,
     externalOrderId: null,
     fee: params.shippingFee ? Math.round(params.shippingFee) : null,
+    shippingFee: params.shippingFee ? Math.round(params.shippingFee) : null,
+    status: "submitted",
     statusCode: "submitted",
     submittedAt: new Date(),
     rawResponse: {
@@ -697,5 +673,6 @@ export async function submitManualShipping(params: SubmitManualShippingParams) {
     trackingCode: params.trackingCode,
     providerName: params.providerName ?? "Thủ công",
     shippingStatus: "submitted",
+    providerCode: "manual",
   };
 }
