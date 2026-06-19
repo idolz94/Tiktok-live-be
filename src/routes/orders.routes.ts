@@ -6,27 +6,25 @@ import { requireAuth } from "../middlewares/auth.js";
 import { requireUsableAccountContext } from "../services/account.service.js";
 import {
   addOrderItem,
+  cancelShipment,
   createOrderFromComment,
+  createShipment,
   deleteOrder,
-  getOrderForShop,
   getShippingFee,
   getShippingTracking,
   listOrders,
   removeOrderItem,
   submitManualShipping,
-  submitOrderToGhtk,
   updateOrder,
   updateOrderDepositStatus,
   updateOrderStatus,
   updateOrderItem,
 } from "../services/orders.service.js";
-import { getGhtkToken, ghtkCancelOrder } from "../services/providers/ghtk.service.js";
-import { badRequest } from "../lib/api-error.js";
 
 const router = Router();
 
 const createFromCommentSchema = z.object({
-  comment: z.any(),
+  comment: z.record(z.string(), z.unknown()),
   liveSessionId: z.string().nullish(),
   price: z.number().optional(),
   quantity: z.number().optional(),
@@ -48,18 +46,24 @@ const orderItemSchema = z.object({
   quantity: z.number().int().positive().default(1),
 });
 
-const cancelShippingSchema = z.object({
-  trackingId: z.string().min(1).optional(),
-});
+const shippingProviderCodeSchema = z.enum(["ghtk", "spx", "manual"]).default("ghtk");
 
-const manualShippingSchema = z.object({
-  trackingCode: z.string().min(1, "Mã vận đơn không được để trống"),
-  providerName: z.string().optional(),
-  shippingFee: z.number().min(0).optional(),
-  note: z.string().optional(),
+const feeShippingSchema = z.object({
+  providerCode: shippingProviderCodeSchema.optional(),
+  pickProvince: z.string().min(1),
+  pickDistrict: z.string().min(1),
+  pickWard: z.string().optional(),
+  pickAddress: z.string().optional(),
+  receiverProvince: z.string().min(1),
+  receiverDistrict: z.string().min(1),
+  receiverWard: z.string().optional(),
+  receiverAddress: z.string().optional(),
+  weight: z.number().nonnegative().optional(),
+  transport: z.enum(["road", "fly"]).optional(),
 });
 
 const submitGhtkSchema = z.object({
+  providerCode: shippingProviderCodeSchema.optional(),
   pickName: z.string().min(1),
   pickAddress: z.string().optional().default(""),
   pickProvince: z.string().min(1),
@@ -77,6 +81,20 @@ const submitGhtkSchema = z.object({
   isFreeShip: z.union([z.literal(0), z.literal(1)]).optional(),
   transport: z.enum(["road", "fly"]).optional(),
   pickOption: z.enum(["cod", "post"]).optional(),
+});
+
+const manualShippingSchema = z.object({
+  providerCode: shippingProviderCodeSchema.default("manual"),
+  trackingCode: z.string().min(1, "Mã vận đơn không được để trống"),
+  providerName: z.string().optional(),
+  shippingFee: z.number().min(0).optional(),
+  note: z.string().optional(),
+});
+
+const cancelShippingSchema = z.object({
+  trackingId: z.string().min(1).optional(),
+  reason: z.string().min(1).optional(),
+  providerCode: shippingProviderCodeSchema.optional(),
 });
 
 router.use(requireAuth);
@@ -191,24 +209,69 @@ router.post(
   "/:orderId/shipping/fee",
   asyncHandler(async (request, response) => {
     const context = await requireUsableAccountContext(request);
-    const b = request.body as Record<string, string | undefined>;
+    const body = feeShippingSchema.parse(request.body || {});
 
     const result = await getShippingFee({
       shopId: context.shop.id,
       orderId: String(request.params.orderId),
-      pickProvince: b.pickProvince ?? "",
-      pickDistrict: b.pickDistrict ?? "",
-      pickWard: b.pickWard,
-      pickAddress: b.pickAddress,
-      receiverProvince: b.receiverProvince ?? "",
-      receiverDistrict: b.receiverDistrict ?? "",
-      receiverWard: b.receiverWard,
-      receiverAddress: b.receiverAddress,
-      weight: b.weight ? Number(b.weight) : undefined,
-      transport: b.transport === "fly" ? "fly" : b.transport === "road" ? "road" : undefined,
+      providerCode: body.providerCode,
+      pickProvince: body.pickProvince,
+      pickDistrict: body.pickDistrict,
+      pickWard: body.pickWard,
+      pickAddress: body.pickAddress,
+      receiverProvince: body.receiverProvince,
+      receiverDistrict: body.receiverDistrict,
+      receiverWard: body.receiverWard,
+      receiverAddress: body.receiverAddress,
+      weight: body.weight,
+      transport: body.transport,
     });
 
     return ok(response, { fee: result });
+  }),
+);
+
+router.post(
+  "/:orderId/shipping",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const body = submitGhtkSchema.parse(request.body || {});
+    const providerCode = body.providerCode ?? "ghtk";
+
+    const result =
+      providerCode === "manual"
+        ? await submitManualShipping({
+            shopId: context.shop.id,
+            orderId: String(request.params.orderId),
+            trackingCode: body.receiverAddress || body.pickAddress || body.pickName,
+            providerName: body.pickName,
+            shippingFee: body.isFreeShip === 1 ? 0 : undefined,
+            note: body.note,
+          })
+        : await createShipment({
+            shopId: context.shop.id,
+            orderId: String(request.params.orderId),
+            providerCode,
+            pickName: body.pickName,
+            pickAddress: body.pickAddress,
+            pickProvince: body.pickProvince,
+            pickDistrict: body.pickDistrict,
+            pickWard: body.pickWard,
+            pickTel: body.pickTel,
+            receiverName: body.receiverName,
+            receiverAddress: body.receiverAddress,
+            receiverProvince: body.receiverProvince,
+            receiverDistrict: body.receiverDistrict,
+            receiverWard: body.receiverWard,
+            receiverHamlet: body.receiverHamlet,
+            receiverTel: body.receiverTel,
+            note: body.note,
+            isFreeShip: body.isFreeShip,
+            transport: body.transport,
+            pickOption: body.pickOption,
+          });
+
+    return mutateOk(response, "Tạo vận đơn thành công.", { shipping: result });
   }),
 );
 
@@ -230,10 +293,27 @@ router.post(
     const context = await requireUsableAccountContext(request);
     const body = submitGhtkSchema.parse(request.body || {});
 
-    const result = await submitOrderToGhtk({
+    const result = await createShipment({
       shopId: context.shop.id,
       orderId: String(request.params.orderId),
-      ...body,
+      providerCode: body.providerCode ?? "ghtk",
+      pickName: body.pickName,
+      pickAddress: body.pickAddress,
+      pickProvince: body.pickProvince,
+      pickDistrict: body.pickDistrict,
+      pickWard: body.pickWard,
+      pickTel: body.pickTel,
+      receiverName: body.receiverName,
+      receiverAddress: body.receiverAddress,
+      receiverProvince: body.receiverProvince,
+      receiverDistrict: body.receiverDistrict,
+      receiverWard: body.receiverWard,
+      receiverHamlet: body.receiverHamlet,
+      receiverTel: body.receiverTel,
+      note: body.note,
+      isFreeShip: body.isFreeShip,
+      transport: body.transport,
+      pickOption: body.pickOption,
     });
 
     return mutateOk(response, "Đăng đơn GHTK thành công.", { shipping: result });
@@ -245,18 +325,14 @@ router.post(
   asyncHandler(async (request, response) => {
     const context = await requireUsableAccountContext(request);
     const body = cancelShippingSchema.parse(request.body || {});
+    const result = await cancelShipment({
+      shopId: context.shop.id,
+      orderId: String(request.params.orderId),
+      trackingId: body.trackingId,
+      reason: body.reason,
+    });
 
-    const order = await getOrderForShop(String(request.params.orderId), context.shop.id);
-
-    const trackingId = body.trackingId ?? order.orderCode ?? "";
-    if (!trackingId) throw badRequest("Đơn hàng chưa có mã vận đơn để hủy.");
-
-    const token = await getGhtkToken(context.shop.id);
-    if (!token) throw badRequest("Shop chưa cấu hình token GHTK. Vui lòng vào cài đặt để thêm token.");
-
-    const result = await ghtkCancelOrder({ token, trackingId });
-
-    return mutateOk(response, "Hủy vận đơn GHTK thành công.", { logId: result.logId });
+    return mutateOk(response, "Hủy vận đơn thành công.", { shipping: result });
   }),
 );
 

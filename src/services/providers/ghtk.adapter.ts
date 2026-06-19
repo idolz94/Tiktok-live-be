@@ -56,7 +56,7 @@ export function createGhtkAdapter(): ShippingProviderAdapter {
       const items = order.items ?? [];
       if (!items.length) throw new ApiError(400, "Đơn hàng chưa có sản phẩm để đăng lên GHTK.", "ORDER_ITEMS_MISSING");
 
-      const ghtkProducts = items.map((item: any) => ({
+      const ghtkProducts = items.map((item) => ({
         name: item.productName ?? item.productCode ?? "Sản phẩm",
         weight: 0.3,
         quantity: item.quantity ?? 1,

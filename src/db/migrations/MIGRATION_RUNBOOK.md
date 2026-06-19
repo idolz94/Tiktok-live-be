@@ -1,0 +1,117 @@
+# Migration runbook — shipping redesign
+
+## Context
+
+Migrations `0008`, `0009`, and `0010` must run on any production database that was
+initialized with `0000`–`0007` (or `0006` full-rebuild). They are idempotent (`IF NOT EXISTS`,
+`WHERE ... IS NULL`, `ON CONFLICT DO UPDATE`) and can be run safely on a live DB.
+
+Fresh installs: run `0006_full_schema_rebuild.sql` then `0008`, `0009`, `0010`.
+
+## Run order
+
+```
+0008_shipping_redesign_additive.sql   -- ADD COLUMN, CREATE TABLE, seed shipping_providers
+0009_shipping_redesign_backfill.sql   -- UPDATE existing rows, INSERT seed events
+0010_shipping_money_integer.sql       -- ALTER COLUMN TYPE for money fields
+```
+
+## What each migration does
+
+### 0008 — additive schema changes
+
+Adds the columns that the shipping redesign needs to `order_shipments`:
+
+| Column | Type | Default |
+|--------|------|---------|
+| `tracking_code` | text | — |
+| `shipping_fee` | integer | — |
+| `cod_amount` | integer | — |
+| `status` | text | `'submitted'` NOT NULL |
+| `status_raw` | text | — |
+| `payment_side` | text | — |
+| `label_url` | text | — |
+| `label_format` | text | — |
+| `label_paper_size` | text | — |
+| `cancelled_at` | timestamptz | — |
+| `cancel_reason` | text | — |
+| `created_by_user_id` | uuid FK users | — |
+| `updated_at` | timestamptz | `now()` NOT NULL |
+
+Creates `shipment_events` table (if not exists) with indexes.
+
+Seeds `shipping_providers` rows for `ghtk`, `spx`, and `manual`.
+
+Adds `extra_config` jsonb and `updated_at` to `shop_shipping_providers`.
+
+### 0009 — backfill
+
+- Lowercases `order_shipments.provider_code`.
+- Sets `status` for rows where it is NULL (maps from `status_code` via GHTK rules or defaults to `'submitted'`).
+- Copies `status_code` → `status_raw` where `status_raw` is NULL.
+- Defaults `payment_side` = `'recipient_pays'`, `label_format` = `'pdf'`, `label_paper_size` = `'A4'` where NULL.
+- Inserts a `'created'` event into `shipment_events` for every shipment that has no events yet.
+
+### 0010 — integer money
+
+Converts `orders` money columns from `real` to `integer` (rounds to nearest VND):
+
+- `subtotal_amount`, `shipping_fee`, `discount_amount`, `deposit_amount`, `cod_amount`, `total_amount`
+
+Converts `order_shipments.fee` from `real` to `integer`.
+
+## Drizzle journal state
+
+The Drizzle journal (`meta/_journal.json`) only tracks `0000` and `0001` — the two
+auto-generated migrations. Migrations `0002`–`0010` were written by hand and are
+**outside Drizzle's snapshot knowledge**.
+
+Do NOT run `db:generate` expecting it to produce `0008`/`0009`/`0010` — they already
+exist. Running `db:generate` now would produce a diff that re-adds the columns that were
+added manually, resulting in duplicate-column errors.
+
+To bring Drizzle's snapshot up to date after applying all manual migrations, run:
+
+```bash
+npm run db:push   # only on dev/staging — will introspect live DB and sync
+```
+
+Or regenerate the snapshot by running `db:generate` once against a DB that already has
+`0008–0010` applied and verifying the output is empty (no-op diff).
+
+## Orders backfill — shipping_status
+
+The `orders.shipping_status` column defaults to `'not_shipped'`. Existing orders already
+have correct values because the default was set when the column was added. No manual
+backfill needed.
+
+The `orders.provider_code` column was added in `0001`/`0002` and is optional — it stores
+the provider used when shipping was submitted directly from the order (legacy path). New
+shipments use `order_shipments.provider_code` as the canonical source.
+
+## Verification queries
+
+Run after applying all migrations to verify:
+
+```sql
+-- All order_shipments have a valid status
+SELECT status, count(*)
+FROM order_shipments
+GROUP BY status;
+-- Expected statuses: submitted, waiting_pickup, shipping, delivered, cancelled, returned, failed
+
+-- All shipments have at least one event
+SELECT count(*) FROM order_shipments os
+WHERE NOT EXISTS (
+  SELECT 1 FROM shipment_events se WHERE se.shipment_id = os.id
+);
+-- Expected: 0
+
+-- shipping_providers seeded
+SELECT code, name, status FROM shipping_providers ORDER BY code;
+-- Expected: ghtk, manual, spx
+
+-- Money columns are integers (not real)
+SELECT pg_typeof(subtotal_amount) FROM orders LIMIT 1;
+-- Expected: integer
+```

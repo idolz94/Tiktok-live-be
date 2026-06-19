@@ -11,6 +11,8 @@
     "start": "node dist/server.js",
     "start:worker": "node dist/workers/index.js",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "lint": "eslint . --ext .ts",
     "gn:index": "gitnexus analyze --skip-agents-md",
     "gn:index:force": "gitnexus analyze --force --skip-agents-md",
@@ -52,6 +54,7 @@
     "drizzle-kit": "^0.31.10",
     "eslint": "^10.5.0",
     "globals": "^17.6.0",
-    "tsx": "^4.19.2"
+    "tsx": "^4.19.2",
+    "vitest": "^4.1.9"
   }
 }

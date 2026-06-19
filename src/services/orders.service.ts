@@ -46,7 +46,36 @@ async function generateUniqueOrderCode(): Promise<string> {
 const DEFAULT_PRICE = 20000;
 const DEFAULT_QUANTITY = 1;
 
-async function attachProducts<T extends { id: string; customerAddressId?: string | null }>(orderRows: T[]): Promise<(T & { products: any[]; shipment: any | null; customerAddressData: any | null })[]> {
+function toMoney(value: unknown) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.round(n) : 0;
+}
+
+function reconcileOrderAmounts(order: {
+  subtotalAmount?: number | null;
+  shippingFee?: number | null;
+  discountAmount?: number | null;
+  depositAmount?: number | null;
+  codAmount?: number | null;
+}) {
+  const subtotalAmount = toMoney(order.subtotalAmount);
+  const shippingFee = toMoney(order.shippingFee);
+  const discountAmount = toMoney(order.discountAmount);
+  const depositAmount = toMoney(order.depositAmount);
+  const codAmount = toMoney(order.codAmount);
+  const totalAmount = Math.max(0, subtotalAmount + shippingFee - discountAmount);
+  const remainingAmount = Math.max(0, totalAmount - depositAmount);
+  return { subtotalAmount, shippingFee, discountAmount, depositAmount, codAmount, totalAmount, remainingAmount };
+}
+
+async function updateOrderAmounts(orderId: string, shopId: string) {
+  const [order] = await db.select().from(orders).where(and(eq(orders.id, orderId), eq(orders.shopId, shopId))).limit(1);
+  if (!order) throw notFound("Không tìm thấy đơn hàng.");
+  const amounts = reconcileOrderAmounts(order);
+  await db.update(orders).set({ ...amounts, updatedAt: new Date() }).where(and(eq(orders.id, orderId), eq(orders.shopId, shopId)));
+}
+
+async function attachProducts<T extends { id: string; customerAddressId?: string | null }>(orderRows: T[]): Promise<(T & { products: (typeof orderItems.$inferSelect)[]; shipment: typeof orderShipments.$inferSelect | null; customerAddressData: typeof customerAddresses.$inferSelect | null })[]> {
   if (!orderRows.length) return orderRows.map((o) => ({ ...o, products: [], shipment: null, customerAddressData: null }));
 
   const orderIds = orderRows.map((o) => o.id);
@@ -60,19 +89,19 @@ async function attachProducts<T extends { id: string; customerAddressId?: string
       : Promise.resolve([]),
   ]);
 
-  const byOrderId = new Map<string, any[]>();
+  const byOrderId = new Map<string, (typeof orderItems.$inferSelect)[]>();
   for (const item of items) {
     const list = byOrderId.get(item.orderId) ?? [];
     list.push(item);
     byOrderId.set(item.orderId, list);
   }
 
-  const shipmentByOrderId = new Map<string, any>();
+  const shipmentByOrderId = new Map<string, typeof orderShipments.$inferSelect>();
   for (const s of shipmentRows) {
     shipmentByOrderId.set(s.orderId, s);
   }
 
-  const addressById = new Map<string, any>();
+  const addressById = new Map<string, typeof customerAddresses.$inferSelect>();
   for (const a of addressRows) {
     addressById.set(a.id, a);
   }
@@ -110,7 +139,7 @@ export async function createOrderFromComment({
 }: {
   shopId: string;
   userId: string;
-  comment: any;
+  comment: Record<string, unknown>;
   liveSessionId?: string | null;
   price?: number;
   quantity?: number;
@@ -141,7 +170,7 @@ export async function createOrderFromComment({
     : null;
 
   const subtotalAmount = safePrice * safeQuantity;
-  const totalAmount = subtotalAmount;
+  const amounts = reconcileOrderAmounts({ subtotalAmount, shippingFee: 0, discountAmount: 0, depositAmount: 0, codAmount: 0 });
   const liveCommentId = await findDbLiveCommentId({ shopId, comment });
 
   const [order] = await db
@@ -165,12 +194,7 @@ export async function createOrderFromComment({
       depositStatus: "unpaid",
       paymentStatus: "unpaid",
       shippingStatus: "not_shipped",
-      subtotalAmount,
-      shippingFee: 0,
-      discountAmount: 0,
-      totalAmount,
-      depositAmount: 0,
-      codAmount: 0,
+      ...amounts,
       note,
       createdBy: userId,
     })
@@ -192,7 +216,7 @@ export async function createOrderFromComment({
   void Promise.all([
     updateLiveCommentOrder({ commentId: liveCommentId, orderId: order.id }),
     updateLiveSessionOrderCount(liveSessionId ?? null),
-    updateCustomerAfterOrder({ customerId: customer?.id ?? null, totalAmount }),
+    updateCustomerAfterOrder({ customerId: customer?.id ?? null, totalAmount: amounts.totalAmount }),
   ]).catch((err) => {
     console.error("CREATE_ORDER_FROM_COMMENT_SIDE_EFFECT_FAILED", err);
   });
@@ -401,6 +425,7 @@ export async function addOrderItem({
     .update(orders)
     .set({ subtotalAmount: subtotal, updatedAt: new Date() })
     .where(and(eq(orders.id, orderId), eq(orders.shopId, shopId)));
+  await updateOrderAmounts(orderId, shopId);
 
   return item;
 }
@@ -424,7 +449,7 @@ export async function updateOrderItem({
 }) {
   await assertOrderInShop(orderId, shopId);
 
-  const updates: Record<string, any> = { updatedAt: new Date() };
+  const updates: Record<string, unknown> = { updatedAt: new Date() };
   if (productCode !== undefined) updates.productCode = productCode;
   if (productName !== undefined) updates.productName = productName;
   if (price !== undefined && Number.isFinite(price) && price >= 0) updates.price = price;
@@ -449,6 +474,7 @@ export async function updateOrderItem({
     .update(orders)
     .set({ subtotalAmount: subtotal, updatedAt: new Date() })
     .where(and(eq(orders.id, orderId), eq(orders.shopId, shopId)));
+  await updateOrderAmounts(orderId, shopId);
 
   return item;
 }
@@ -479,6 +505,7 @@ export async function removeOrderItem({
     .update(orders)
     .set({ subtotalAmount: subtotal, updatedAt: new Date() })
     .where(and(eq(orders.id, orderId), eq(orders.shopId, shopId)));
+  await updateOrderAmounts(orderId, shopId);
 
   return { ok: true };
 }
@@ -486,6 +513,7 @@ export async function removeOrderItem({
 export type GetShippingFeeParams = {
   shopId: string;
   orderId: string;
+  providerCode?: string;
   pickProvince: string;
   pickDistrict: string;
   pickWard?: string;
@@ -497,10 +525,9 @@ export type GetShippingFeeParams = {
   weight?: number;
   transport?: "road" | "fly";
 };
-
 export async function getShippingFee(params: GetShippingFeeParams) {
   await assertOrderInShop(params.orderId, params.shopId);
-  const provider = getShippingProviderAdapter("ghtk");
+  const provider = getShippingProviderAdapter(params.providerCode ?? "ghtk");
 
   return provider.getFee({
     shopId: params.shopId,
@@ -521,6 +548,7 @@ export async function getShippingFee(params: GetShippingFeeParams) {
 export type SubmitShippingParams = {
   shopId: string;
   orderId: string;
+  providerCode?: string;
   pickName: string;
   pickAddress: string;
   pickProvince: string;
@@ -540,23 +568,42 @@ export type SubmitShippingParams = {
   pickOption?: "cod" | "post";
 };
 
-export async function submitOrderToGhtk(params: SubmitShippingParams) {
-  await assertOrderInShop(params.orderId, params.shopId);
-  const provider = getShippingProviderAdapter("ghtk");
-  const result = await provider.submit(params);
+function hasActiveShipment(status?: string | null) {
+  return status !== null && status !== undefined && !["cancelled", "canceled"].includes(status);
+}
 
+async function getCurrentShipment(orderId: string) {
+  const rows = await db.select().from(orderShipments).where(eq(orderShipments.orderId, orderId)).limit(1);
+  return rows[0] ?? null;
+}
+
+async function insertShipmentAndUpdateOrder({
+  orderId,
+  shopId,
+  providerCode,
+  result,
+  note,
+}: {
+  orderId: string;
+  shopId: string;
+  providerCode: string;
+  result: Awaited<ReturnType<ReturnType<typeof getShippingProviderAdapter>["submit"]>>;
+  note?: string;
+}) {
   const patch: Record<string, unknown> = {
     providerCode: result.providerCode,
     shippingFee: result.fee ?? undefined,
     shippingStatus: result.status ?? "submitted",
+    status: "packed",
     updatedAt: new Date(),
   };
   if (result.labelPaperSize !== undefined) patch["labelPaperSize"] = result.labelPaperSize;
+  if (note !== undefined) patch["note"] = note;
 
   await db.insert(orderShipments).values({
-    orderId: params.orderId,
-    shopId: params.shopId,
-    providerCode: result.providerCode.toUpperCase(),
+    orderId,
+    shopId,
+    providerCode: providerCode,
     trackingLabel: result.trackingLabel,
     trackingCode: result.trackingCode ?? null,
     externalOrderId: result.externalOrderId ?? null,
@@ -575,12 +622,35 @@ export async function submitOrderToGhtk(params: SubmitShippingParams) {
     rawResponse: result.rawResponse as Record<string, unknown> | null,
   });
 
-  await db
-    .update(orders)
-    .set(patch)
-    .where(and(eq(orders.id, params.orderId), eq(orders.shopId, params.shopId)));
+  await db.update(orders).set(patch).where(and(eq(orders.id, orderId), eq(orders.shopId, shopId)));
+}
+
+export async function createShipment(params: SubmitShippingParams) {
+  const order = await assertOrderInShop(params.orderId, params.shopId);
+  if ((order.status ?? "") !== "draft") {
+    throw badRequest(`Không thể tạo vận đơn cho đơn hàng ở trạng thái "${order.status}".`);
+  }
+
+  const currentShipment = await getCurrentShipment(params.orderId);
+  if (currentShipment && hasActiveShipment(currentShipment.status)) {
+    throw badRequest("Đơn hàng đã có vận đơn. Hủy vận đơn cũ trước khi tạo mới.");
+  }
+
+  const provider = getShippingProviderAdapter(params.providerCode ?? "ghtk");
+  const result = await provider.submit(params);
+  await insertShipmentAndUpdateOrder({
+    orderId: params.orderId,
+    shopId: params.shopId,
+    providerCode: result.providerCode,
+    result,
+    note: params.note,
+  });
 
   return { ...result, orderId: params.orderId };
+}
+
+export async function submitOrderToGhtk(params: SubmitShippingParams) {
+  return createShipment({ ...params, providerCode: "ghtk" });
 }
 
 export async function getShippingTracking(params: { shopId: string; orderId: string }) {
@@ -620,59 +690,61 @@ export type SubmitManualShippingParams = {
 
 export async function submitManualShipping(params: SubmitManualShippingParams) {
   const order = await assertOrderInShop(params.orderId, params.shopId);
-
-  const allowedStatuses = ["draft", "confirmed", "packed"];
-  if (!allowedStatuses.includes(order.status ?? "")) {
+  if ((order.status ?? "") !== "draft") {
     throw badRequest(`Không thể tạo vận đơn cho đơn hàng ở trạng thái "${order.status}".`);
   }
 
-  const existing = await db
-    .select({ id: orderShipments.id })
-    .from(orderShipments)
-    .where(eq(orderShipments.orderId, params.orderId))
-    .limit(1);
-
-  if (existing.length) {
+  const currentShipment = await getCurrentShipment(params.orderId);
+  if (currentShipment && hasActiveShipment(currentShipment.status)) {
     throw badRequest("Đơn hàng đã có vận đơn. Hủy vận đơn cũ trước khi tạo mới.");
   }
 
-  await db.insert(orderShipments).values({
-    orderId: params.orderId,
-    shopId: params.shopId,
-    providerCode: "MANUAL",
+  const result = {
+    providerCode: "manual" as const,
     trackingLabel: params.trackingCode,
     trackingCode: params.trackingCode,
     externalOrderId: null,
-    fee: params.shippingFee ? Math.round(params.shippingFee) : null,
-    shippingFee: params.shippingFee ? Math.round(params.shippingFee) : null,
-    status: "submitted",
-    statusCode: "submitted",
-    submittedAt: new Date(),
-    rawResponse: {
-      provider: "MANUAL",
-      providerName: params.providerName ?? "Thủ công",
-      note: params.note ?? null,
-    } as unknown as Record<string, unknown>,
+    fee: params.shippingFee ?? null,
+    status: "submitted" as const,
+    statusCode: null,
+    statusRaw: null,
+    rawResponse: { provider: "manual", providerName: params.providerName ?? "Thủ công" } as Record<string, unknown>,
+  };
+
+  await insertShipmentAndUpdateOrder({
+    orderId: params.orderId,
+    shopId: params.shopId,
+    providerCode: "manual",
+    result,
+    note: params.note,
   });
 
-  const patch: Record<string, unknown> = {
-    providerCode: "MANUAL",
-    shippingStatus: "submitted",
-    updatedAt: new Date(),
-  };
-  if (params.shippingFee !== undefined) patch.shippingFee = params.shippingFee;
-  if (params.note !== undefined && order.note === null) patch.note = params.note;
+  return { ...result, orderId: params.orderId };
+}
 
+export async function cancelShipment(params: { shopId: string; orderId: string; trackingId?: string; reason?: string }) {
+  const order = await assertOrderInShop(params.orderId, params.shopId);
+  const shipment = await getCurrentShipment(params.orderId);
+  if (!shipment) throw badRequest("Đơn hàng chưa có vận đơn để hủy.");
+
+  const providerCode = normalizeShippingProviderCode(shipment.providerCode);
+  if (providerCode === "manual") {
+    const cancelledAt = new Date();
+    await db
+      .update(orderShipments)
+      .set({ status: "cancelled", cancelledAt, cancelReason: params.reason ?? null, updatedAt: cancelledAt })
+      .where(eq(orderShipments.id, shipment.id));
+    await db.update(orders).set({ shippingStatus: "cancelled", updatedAt: cancelledAt }).where(eq(orders.id, order.id));
+    return { providerCode: "manual", status: "cancelled", logId: null };
+  }
+
+  const provider = getShippingProviderAdapter(providerCode);
+  const result = await provider.cancel({ shopId: params.shopId, orderId: params.orderId, trackingId: params.trackingId ?? shipment.trackingLabel ?? shipment.trackingCode ?? undefined });
+  const cancelledAt = new Date();
   await db
-    .update(orders)
-    .set(patch)
-    .where(and(eq(orders.id, params.orderId), eq(orders.shopId, params.shopId)));
-
-  return {
-    orderId: params.orderId,
-    trackingCode: params.trackingCode,
-    providerName: params.providerName ?? "Thủ công",
-    shippingStatus: "submitted",
-    providerCode: "manual",
-  };
+    .update(orderShipments)
+    .set({ status: result.status ?? "cancelled", cancelledAt, cancelReason: params.reason ?? null, updatedAt: cancelledAt })
+    .where(eq(orderShipments.id, shipment.id));
+  await db.update(orders).set({ shippingStatus: result.status ?? "cancelled", updatedAt: cancelledAt }).where(eq(orders.id, order.id));
+  return result;
 }
