@@ -23,7 +23,19 @@ export async function findOrCreateCustomer({
     .where(and(eq(customers.shopId, shopId), eq(customers.tiktokUsername, normalizedUsername)))
     .limit(1);
 
-  if (rows[0]) return rows[0];
+  if (rows[0]) {
+    const existing = rows[0];
+    const newAvatar = avatarUrl?.trim() || null;
+    if (newAvatar && newAvatar !== existing.avatarUrl) {
+      const [updated] = await db
+        .update(customers)
+        .set({ avatarUrl: newAvatar, updatedAt: new Date() })
+        .where(eq(customers.id, existing.id))
+        .returning();
+      return updated ?? existing;
+    }
+    return existing;
+  }
 
   const [newCustomer] = await db
     .insert(customers)

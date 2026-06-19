@@ -10,51 +10,80 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 
-// ─── profiles ────────────────────────────────────────────────────────────────
-export const profiles = pgTable("profiles", {
-  id: text("id").primaryKey(), // Clerk user id (user_2abc…)
+// ─── users ────────────────────────────────────────────────────────────────────
+export const users = pgTable("users", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  username: text("username").notNull().unique(),
+  email: text("email").unique(),
+  phone: text("phone").unique(),
+  passwordHash: text("password_hash"),
   fullName: text("full_name"),
-  email: text("email"),
-  phone: text("phone"),
   avatarUrl: text("avatar_url"),
-  status: text("status").default("active"),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  status: text("status").notNull().default("active"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ─── oauth_accounts ───────────────────────────────────────────────────────────
+export const oauthAccounts = pgTable("oauth_accounts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  provider: text("provider").notNull(),
+  providerUserId: text("provider_user_id").notNull(),
+  email: text("email"),
+  accessToken: text("access_token"),
+  refreshToken: text("refresh_token"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("oauth_accounts_provider_user_unique").on(table.provider, table.providerUserId),
+]);
+
+// ─── refresh_tokens ───────────────────────────────────────────────────────────
+export const refreshTokens = pgTable("refresh_tokens", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  token: text("token").notNull().unique(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ─── shops ────────────────────────────────────────────────────────────────────
 export const shops = pgTable("shops", {
   id: uuid("id").primaryKey().defaultRandom(),
-  ownerId: text("owner_id").notNull(), // Clerk user id
+  ownerId: uuid("owner_id").notNull().references(() => users.id),
   name: text("name").notNull(),
   phone: text("phone"),
   defaultTikTokUsername: text("default_tiktok_username"),
-  status: text("status").default("active"),
-  licenseStatus: text("license_status").default("trial"),
-  licenseExpiredAt: timestamp("license_expired_at"),
-  trialEndsAt: timestamp("trial_ends_at"),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  status: text("status").notNull().default("active"),
+  licenseStatus: text("license_status").notNull().default("trial"),
+  licenseExpiredAt: timestamp("license_expired_at", { withTimezone: true }),
+  trialEndsAt: timestamp("trial_ends_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ─── shop_members ─────────────────────────────────────────────────────────────
 export const shopMembers = pgTable("shop_members", {
   id: uuid("id").primaryKey().defaultRandom(),
   shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
-  userId: text("user_id").notNull(), // Clerk user id
-  role: text("role").default("owner"),
-  status: text("status").default("active"),
-  invitedBy: text("invited_by"),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-});
+  userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  role: text("role").notNull().default("owner"),
+  status: text("status").notNull().default("active"),
+  invitedBy: uuid("invited_by").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("shop_members_shop_user_unique").on(table.shopId, table.userId),
+]);
 
 // ─── license_plans ────────────────────────────────────────────────────────────
 export const licensePlans = pgTable("license_plans", {
   code: text("code").primaryKey(),
   name: text("name").notNull(),
   description: text("description"),
-  priceMonthly: real("price_monthly").default(0),
+  priceMonthly: integer("price_monthly").default(0),
   maxOrdersPerMonth: integer("max_orders_per_month"),
   maxLiveSessionsPerMonth: integer("max_live_sessions_per_month"),
   maxMembers: integer("max_members"),
@@ -65,8 +94,8 @@ export const licensePlans = pgTable("license_plans", {
   canUseShipping: boolean("can_use_shipping").default(false),
   status: text("status").default("active"),
   sortOrder: integer("sort_order").default(0),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ─── shop_licenses ────────────────────────────────────────────────────────────
@@ -74,22 +103,23 @@ export const shopLicenses = pgTable("shop_licenses", {
   id: uuid("id").primaryKey().defaultRandom(),
   shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
   planCode: text("plan_code").notNull().references(() => licensePlans.code),
-  status: text("status").default("trial"),
-  startedAt: timestamp("started_at").defaultNow(),
-  expiredAt: timestamp("expired_at"),
-  trialEndsAt: timestamp("trial_ends_at"),
-  isCurrent: boolean("is_current").default(true),
+  status: text("status").notNull().default("trial"),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  expiredAt: timestamp("expired_at", { withTimezone: true }),
+  trialEndsAt: timestamp("trial_ends_at", { withTimezone: true }),
+  isCurrent: boolean("is_current").notNull().default(true),
   maxOrdersPerMonth: integer("max_orders_per_month"),
   maxLiveSessionsPerMonth: integer("max_live_sessions_per_month"),
   maxMembers: integer("max_members"),
   maxTiktokAccounts: integer("max_tiktok_accounts"),
-  price: real("price").default(0),
-  currency: text("currency").default("VND"),
-  paymentStatus: text("payment_status").default("unpaid"),
-  lastPaymentAt: timestamp("last_payment_at"),
+  price: integer("price").notNull().default(0),
+  currency: text("currency").notNull().default("VND"),
+  paymentStatus: text("payment_status").notNull().default("unpaid"),
+  lastPaymentAt: timestamp("last_payment_at", { withTimezone: true }),
+  activatedBy: uuid("activated_by").references(() => users.id),
   note: text("note"),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ─── shop_tiktok_channels ─────────────────────────────────────────────────────
@@ -100,27 +130,27 @@ export const tiktokChannels = pgTable("shop_tiktok_channels", {
   displayName: text("display_name"),
   isDefault: boolean("is_default").default(false),
   status: text("status").default("active"),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ─── live_sessions ────────────────────────────────────────────────────────────
 export const liveSessions = pgTable("live_sessions", {
   id: uuid("id").primaryKey().defaultRandom(),
   shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
-  createdBy: text("created_by"),
+  createdBy: uuid("created_by").references(() => users.id),
   externalSessionId: text("external_session_id"),
   tiktokUsername: text("tiktok_username"),
-  startedAt: timestamp("started_at"),
-  endedAt: timestamp("ended_at"),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  endedAt: timestamp("ended_at", { withTimezone: true }),
   durationSeconds: integer("duration_seconds").default(0),
   commentCount: integer("comment_count").default(0),
   orderCount: integer("order_count").default(0),
   customerCount: integer("customer_count").default(0),
   status: text("status").default("running"),
   endReason: text("end_reason"),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ─── customers ────────────────────────────────────────────────────────────────
@@ -140,10 +170,10 @@ export const customers = pgTable("customers", {
   tags: jsonb("tags").default([]),
   totalOrders: integer("total_orders").default(0),
   totalSpent: real("total_spent").default(0),
-  lastOrderAt: timestamp("last_order_at"),
+  lastOrderAt: timestamp("last_order_at", { withTimezone: true }),
   status: text("status").default("active"),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ─── shop_addresses ───────────────────────────────────────────────────────────
@@ -158,8 +188,8 @@ export const shopAddresses = pgTable("shop_addresses", {
   district: text("district"),
   ward: text("ward"),
   isDefault: boolean("is_default").default(false),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ─── customer_addresses ───────────────────────────────────────────────────────
@@ -175,8 +205,8 @@ export const customerAddresses = pgTable("customer_addresses", {
   district: text("district"),
   ward: text("ward"),
   isDefault: boolean("is_default").default(false),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ─── orders ───────────────────────────────────────────────────────────────────
@@ -192,6 +222,7 @@ export const orders = pgTable("orders", {
   customerTiktokUsername: text("customer_tiktok_username"),
   customerPhone: text("customer_phone"),
   customerAddress: text("customer_address"),
+  customerAvatarUrl: text("customer_avatar_url"),
   customerAddressId: uuid("customer_address_id").references(() => customerAddresses.id, { onDelete: "set null" }),
   commentText: text("comment_text"),
   color: text("color"),
@@ -207,15 +238,15 @@ export const orders = pgTable("orders", {
   totalAmount: real("total_amount").default(0),
   currency: text("currency").default("VND"),
   note: text("note"),
-  createdBy: text("created_by"),
-  confirmedAt: timestamp("confirmed_at"),
-  canceledAt: timestamp("canceled_at"),
+  createdBy: uuid("created_by").references(() => users.id),
+  confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+  canceledAt: timestamp("canceled_at", { withTimezone: true }),
   providerCode: text("provider_code"),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-}, (table) => ({
-  orderCodeUnique: uniqueIndex("orders_order_code_unique").on(table.orderCode),
-}));
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("orders_order_code_unique").on(table.orderCode),
+]);
 
 // ─── order_items ──────────────────────────────────────────────────────────────
 export const orderItems = pgTable("order_items", {
@@ -230,8 +261,8 @@ export const orderItems = pgTable("order_items", {
   quantity: integer("quantity").default(1),
   price: real("price").default(0),
   rawCommentText: text("raw_comment_text"),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ─── order_shipments ─────────────────────────────────────────────────────────
@@ -244,12 +275,12 @@ export const orderShipments = pgTable("order_shipments", {
   externalOrderId: text("external_order_id"),
   fee: integer("fee"),
   statusCode: text("status_code"),
-  submittedAt: timestamp("submitted_at"),
+  submittedAt: timestamp("submitted_at", { withTimezone: true }),
   estimatedPickTime: text("estimated_pick_time"),
   estimatedDeliverTime: text("estimated_deliver_time"),
   rawResponse: jsonb("raw_response"),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ─── live_comments ────────────────────────────────────────────────────────────
@@ -275,8 +306,8 @@ export const liveComments = pgTable("live_comments", {
   isOrderCreated: boolean("is_order_created").default(false),
   orderId: uuid("order_id"),
   rawPayload: jsonb("raw_payload"),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   uniqueIndex("live_comments_shop_external_comment_id_unique").on(table.shopId, table.externalCommentId),
 ]);
@@ -293,10 +324,10 @@ export const payments = pgTable("payments", {
   currency: text("currency").default("VND"),
   status: text("status").default("pending"),
   checkoutUrl: text("checkout_url"),
-  paidAt: timestamp("paid_at"),
+  paidAt: timestamp("paid_at", { withTimezone: true }),
   rawPayload: jsonb("raw_payload"),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ─── shop_settings ────────────────────────────────────────────────────────────
@@ -305,8 +336,8 @@ export const shopSettings = pgTable("shop_settings", {
   shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
   key: text("key").notNull(),
   value: jsonb("value"),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ─── shipping_providers ───────────────────────────────────────────────────────
@@ -314,8 +345,8 @@ export const shippingProviders = pgTable("shipping_providers", {
   code: text("code").primaryKey(),
   name: text("name").notNull(),
   status: text("status").default("active"),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 // ─── shop_shipping_providers ──────────────────────────────────────────────────
@@ -324,9 +355,14 @@ export const shopShippingProviders = pgTable("shop_shipping_providers", {
   shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
   providerCode: text("provider_code").notNull().references(() => shippingProviders.code),
   isEnabled: boolean("is_enabled").default(true),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
-});
+  apiToken: text("api_token"),
+  partnerCode: text("partner_code"),
+  extraConfig: jsonb("extra_config"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("shop_shipping_providers_shop_provider_unique").on(table.shopId, table.providerCode),
+]);
 
 // ─── shop_product_presets ─────────────────────────────────────────────────────
 export const shopProductPresets = pgTable("shop_product_presets", {
@@ -337,6 +373,6 @@ export const shopProductPresets = pgTable("shop_product_presets", {
   color: text("color"),
   price: integer("price").notNull().default(0),
   sortOrder: integer("sort_order").notNull().default(0),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

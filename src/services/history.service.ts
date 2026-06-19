@@ -67,14 +67,9 @@ export async function listLiveHistory({ shopId, limit = 100 }: { shopId: string;
         ...session,
         orders: sessionOrders,
         comments: sessionComments,
-        order_count: Math.max(Number(session.orderCount || 0), sessionOrders.length),
-        comment_count: Math.max(Number(session.commentCount || 0), sessionComments.length),
+        commentCount: Math.max(Number(session.commentCount || 0), sessionComments.length),
+        orderCount: Math.max(Number(session.orderCount || 0), sessionOrders.length),
       };
     })
-    .filter((session) => {
-      const durationSeconds = Number(session.durationSeconds || 0);
-      const commentCount = Number(session.comment_count || 0);
-      const orderCount = Number(session.order_count || 0);
-      return durationSeconds > 0 || commentCount > 0 || orderCount > 0;
-    });
+    .filter((session) => Number(session.commentCount || 0) > 0 && Number(session.orderCount || 0) > 0);
 }

@@ -3,9 +3,8 @@ export function cleanTikTokUsername(username?: string | null) {
 }
 
 export function normalizeAtUsername(username?: string | null) {
-  const value = String(username || "").trim();
-  if (!value) return "";
-  return value.startsWith("@") ? value : `@${value}`;
+  const value = String(username || "").trim().replace(/^@+/, "");
+  return value;
 }
 
 export function getCommentTikTokUsername(comment: any) {

@@ -20,6 +20,7 @@ import paymentRoutes from "./routes/payment.routes.js";
 import shopSettingsRoutes from "./routes/shop-settings.routes.js";
 import productPresetsRoutes from "./routes/product-presets.routes.js";
 import webhookGhtkRoutes from "./routes/webhook-ghtk.routes.js";
+import adminRoutes from "./routes/admin.routes.js";
 
 const allowedOrigins = env.clientOrigin
   .split(",")
@@ -86,6 +87,7 @@ export function createApp() {
   app.use("/api/payments", paymentRoutes);
   app.use("/api/me/shop-settings", shopSettingsRoutes);
   app.use("/api/me/product-presets", productPresetsRoutes);
+  app.use("/api/admin", adminRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

@@ -19,18 +19,31 @@ export const env = {
   // Neon Postgres
   databaseUrl: readEnv("DATABASE_URL"),
 
-  // Clerk
-  clerkSecretKey: readEnv("CLERK_SECRET_KEY"),
-  clerkPublishableKey: readEnv("CLERK_PUBLISHABLE_KEY"),
+  // JWT custom auth
+  jwtSecret: readEnv("JWT_SECRET"),
+  jwtRefreshSecret: readEnv("JWT_REFRESH_SECRET"),
+  jwtAccessExpiresIn: readEnv("JWT_ACCESS_EXPIRES_IN", "15m"),
+  jwtRefreshExpiresIn: readEnv("JWT_REFRESH_EXPIRES_IN", "30d"),
 
-  trialDays: readNumberEnv("TRIAL_DAYS", 365),
-  defaultPlanCode: readEnv("DEFAULT_PLAN_CODE", "free"),
+  // OAuth — Google
+  googleClientId: readEnv("GOOGLE_CLIENT_ID"),
+  googleClientSecret: readEnv("GOOGLE_CLIENT_SECRET"),
+  googleCallbackUrl: readEnv("GOOGLE_CALLBACK_URL", "http://localhost:3001/api/auth/oauth/google/callback"),
 
-  // Internal API key — used by tiktok-collector service (in-process) is not needed here,
-  // kept for any future external internal callers
+  // OAuth — Facebook
+  facebookAppId: readEnv("FACEBOOK_APP_ID"),
+  facebookAppSecret: readEnv("FACEBOOK_APP_SECRET"),
+  facebookCallbackUrl: readEnv("FACEBOOK_CALLBACK_URL", "http://localhost:3001/api/auth/oauth/facebook/callback"),
+
+  trialDays: readNumberEnv("TRIAL_DAYS", 3),
+  defaultPlanCode: readEnv("DEFAULT_PLAN_CODE", "trial"),
+
   nodeInternalApiKey: readEnv("NODE_INTERNAL_API_KEY", "change_me"),
 
-  // Mobile app key: React Native gửi header x-app-key để được phép gọi API
+  // Admin user id (UUID) — được phép gọi admin-activate
+  adminUserId: readEnv("ADMIN_USER_ID", ""),
+
+  // Mobile app key
   mobileAppKey: readEnv("MOBILE_APP_KEY", "LUMI_APP_REACT_KEY"),
 
   // GHTK shipping
@@ -42,7 +55,8 @@ export const env = {
 export function assertRequiredEnv() {
   const missing = [
     ["DATABASE_URL", env.databaseUrl],
-    ["CLERK_SECRET_KEY", env.clerkSecretKey],
+    ["JWT_SECRET", env.jwtSecret],
+    ["JWT_REFRESH_SECRET", env.jwtRefreshSecret],
   ].filter(([, value]) => !value);
 
   if (missing.length > 0) {

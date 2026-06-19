@@ -13,6 +13,7 @@ import {
   getShippingTracking,
   listOrders,
   removeOrderItem,
+  submitManualShipping,
   submitOrderToGhtk,
   updateOrder,
   updateOrderDepositStatus,
@@ -49,6 +50,13 @@ const orderItemSchema = z.object({
 
 const cancelShippingSchema = z.object({
   trackingId: z.string().min(1).optional(),
+});
+
+const manualShippingSchema = z.object({
+  trackingCode: z.string().min(1, "Mã vận đơn không được để trống"),
+  providerName: z.string().optional(),
+  shippingFee: z.number().min(0).optional(),
+  note: z.string().optional(),
 });
 
 const submitGhtkSchema = z.object({
@@ -249,6 +257,25 @@ router.post(
     const result = await ghtkCancelOrder({ token, trackingId });
 
     return mutateOk(response, "Hủy vận đơn GHTK thành công.", { logId: result.logId });
+  }),
+);
+
+router.post(
+  "/:orderId/shipping/manual",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const body = manualShippingSchema.parse(request.body || {});
+
+    const result = await submitManualShipping({
+      shopId: context.shop.id,
+      orderId: String(request.params.orderId),
+      trackingCode: body.trackingCode,
+      providerName: body.providerName,
+      shippingFee: body.shippingFee,
+      note: body.note,
+    });
+
+    return mutateOk(response, "Tạo vận đơn thủ công thành công.", { shipping: result });
   }),
 );
 

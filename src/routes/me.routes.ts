@@ -4,23 +4,15 @@ import { eq } from "drizzle-orm";
 import { db } from "../lib/db.js";
 import { orders, liveSessions } from "../db/schema/index.js";
 import { asyncHandler } from "../lib/async-handler.js";
-import { mutateCreated, mutateOk, ok } from "../lib/response.js";
+import { mutateOk, ok } from "../lib/response.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { bootstrapAccountContext, requireShopId } from "../services/account.service.js";
 import {
-  createTikTokChannel,
-  deleteTikTokChannel,
   listTikTokChannels,
   updateTikTokChannel,
 } from "../services/tiktok-channels.service.js";
 
 const router = Router();
-
-const createChannelSchema = z.object({
-  tiktokUsername: z.string().min(1, "Thiếu tiktokUsername."),
-  displayName: z.string().optional().nullable(),
-  isDefault: z.boolean().optional(),
-});
 
 const updateChannelSchema = z.object({
   tiktokUsername: z.string().min(1).optional(),
@@ -51,7 +43,7 @@ router.get(
 
     return ok(response, {
       userId: context.userId,
-      profile: context.profile,
+      profile: context.user,
       shopMember: context.shopMember,
       member: context.shopMember,
       shop: context.shop,
@@ -78,24 +70,6 @@ router.get(
   }),
 );
 
-// POST /api/me/tiktok-channels
-router.post(
-  "/tiktok-channels",
-  requireAuth,
-  asyncHandler(async (request, response) => {
-    const context = await bootstrapAccountContext(request);
-    const shopId = context.shop!.id;
-    const body = createChannelSchema.parse(request.body || {});
-    const channel = await createTikTokChannel({
-      shopId,
-      tiktokUsername: body.tiktokUsername,
-      displayName: body.displayName,
-      isDefault: body.isDefault,
-    });
-    return mutateCreated(response, "Thêm kênh TikTok thành công.", { channel });
-  }),
-);
-
 // PATCH /api/me/tiktok-channels/:channelId
 router.patch(
   "/tiktok-channels/:channelId",
@@ -111,20 +85,6 @@ router.patch(
       isDefault: body.isDefault,
     });
     return mutateOk(response, "Cập nhật kênh TikTok thành công.", { channel });
-  }),
-);
-
-// DELETE /api/me/tiktok-channels/:channelId
-router.delete(
-  "/tiktok-channels/:channelId",
-  requireAuth,
-  asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
-    await deleteTikTokChannel({
-      shopId,
-      channelId: String(request.params.channelId),
-    });
-    return mutateOk(response, "Xóa kênh TikTok thành công.", null);
   }),
 );
 

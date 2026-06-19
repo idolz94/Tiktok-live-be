@@ -43,7 +43,9 @@ async function ingestComment(room: RoomState, data: any) {
   const user = data.user || {};
   const uniqueId: string = user.uniqueId || data.uniqueId || "";
   const nickname: string = user.nickname || data.nickname || uniqueId;
+  const profilePicUrls = user.profilePicture?.url;
   const avatarUrl: string =
+    (Array.isArray(profilePicUrls) ? profilePicUrls[0] : profilePicUrls) ||
     user.profilePictureUrl || user.avatarUrl || data.profilePictureUrl || "";
   const commentText: string = data.comment || "";
   const externalCommentId = String(data.msgId || data.id || randomUUID());

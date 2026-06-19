@@ -26,14 +26,7 @@ export async function createTikTokChannel({
   const normalizedUsername = normalizeAtUsername(tiktokUsername);
   if (!normalizedUsername) throw badRequest("Thiếu TikTok username.");
 
-  const existing = await db
-    .select({ id: tiktokChannels.id })
-    .from(tiktokChannels)
-    .where(eq(tiktokChannels.shopId, shopId));
-
-  const shouldBeDefault = isDefault || existing.length === 0;
-
-  if (shouldBeDefault) {
+  if (isDefault) {
     await clearDefaultTikTokChannel(shopId);
   }
 
@@ -43,11 +36,11 @@ export async function createTikTokChannel({
       shopId,
       tiktokUsername: normalizedUsername,
       displayName: displayName ?? null,
-      isDefault: shouldBeDefault,
+      isDefault,
     })
     .returning();
 
-  if (shouldBeDefault) {
+  if (isDefault) {
     await updateShopDefaultTikTokUsername(shopId, normalizedUsername);
   }
 

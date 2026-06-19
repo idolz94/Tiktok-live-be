@@ -1,4 +1,4 @@
-import { eq, and, inArray, sql } from "drizzle-orm";
+import { eq, and, inArray, sql, gte, lt } from "drizzle-orm";
 import { db } from "../lib/db.js";
 import { orders, orderItems, orderShipments, customerAddresses } from "../db/schema/index.js";
 import { badRequest, notFound } from "../lib/api-error.js";
@@ -11,6 +11,29 @@ import { updateLiveSessionOrderCount } from "./live-sessions.service.js";
 import { matchPresetByComment } from "./product-presets.service.js";
 import { getGhtkToken, ghtkSubmitOrder, ghtkGetFee, ghtkGetTracking } from "./providers/ghtk.service.js";
 import type { GhtkSubmitOrderParams } from "./providers/ghtk.service.js";
+import { getCurrentLicense } from "./license.service.js";
+
+async function assertOrderLimitNotExceeded(shopId: string) {
+  const license = await getCurrentLicense(shopId);
+  const limit = license?.maxOrdersPerMonth ?? null;
+  if (limit === null) return;
+
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(orders)
+    .where(and(eq(orders.shopId, shopId), gte(orders.createdAt, monthStart), lt(orders.createdAt, monthEnd)));
+
+  const used = row?.count ?? 0;
+  if (used >= limit) {
+    throw badRequest(
+      `Shop đã tạo ${used}/${limit} đơn trong tháng này. Vui lòng nâng cấp gói để tiếp tục.`,
+    );
+  }
+}
 
 async function generateUniqueOrderCode(): Promise<string> {
   for (let attempt = 0; attempt < 10; attempt++) {
@@ -94,6 +117,8 @@ export async function createOrderFromComment({
   quantity?: number;
   note?: string;
 }) {
+  await assertOrderLimitNotExceeded(shopId);
+
   const commentText = getCommentText(comment);
   const customerTikTokUsername = getCommentTikTokUsername(comment);
   const displayName = getCommentDisplayName(comment);
@@ -137,6 +162,7 @@ export async function createOrderFromComment({
       customerTiktokUsername: customerTikTokUsername,
       customerPhone: "",
       customerAddress: "",
+      customerAvatarUrl: avatarUrl ?? null,
       customerAddressId: defaultAddress?.id ?? null,
       commentText,
       color: preset?.color ?? null,
@@ -591,6 +617,16 @@ export async function getShippingTracking(params: { shopId: string; orderId: str
     .limit(1);
 
   const shipment = shipmentRows[0];
+
+  if (shipment?.providerCode === "MANUAL") {
+    return {
+      provider: "MANUAL",
+      trackingCode: shipment.trackingLabel ?? null,
+      submittedAt: shipment.submittedAt ?? null,
+      fee: shipment.fee ?? null,
+    };
+  }
+
   const trackingOrder = shipment?.trackingLabel ?? order.orderCode;
   if (!trackingOrder) throw badRequest("Đơn hàng chưa có mã vận đơn để tra cứu.");
 
@@ -598,4 +634,68 @@ export async function getShippingTracking(params: { shopId: string; orderId: str
   if (!token) throw badRequest("Shop chưa cấu hình token GHTK.");
 
   return ghtkGetTracking({ token, trackingOrder, partnerCode: undefined });
+}
+
+export type SubmitManualShippingParams = {
+  shopId: string;
+  orderId: string;
+  trackingCode: string;
+  providerName?: string;
+  shippingFee?: number;
+  note?: string;
+};
+
+export async function submitManualShipping(params: SubmitManualShippingParams) {
+  const order = await assertOrderInShop(params.orderId, params.shopId);
+
+  const allowedStatuses = ["draft", "confirmed", "packed"];
+  if (!allowedStatuses.includes(order.status ?? "")) {
+    throw badRequest(`Không thể tạo vận đơn cho đơn hàng ở trạng thái "${order.status}".`);
+  }
+
+  const existing = await db
+    .select({ id: orderShipments.id })
+    .from(orderShipments)
+    .where(eq(orderShipments.orderId, params.orderId))
+    .limit(1);
+
+  if (existing.length) {
+    throw badRequest("Đơn hàng đã có vận đơn. Hủy vận đơn cũ trước khi tạo mới.");
+  }
+
+  await db.insert(orderShipments).values({
+    orderId: params.orderId,
+    shopId: params.shopId,
+    providerCode: "MANUAL",
+    trackingLabel: params.trackingCode,
+    externalOrderId: null,
+    fee: params.shippingFee ? Math.round(params.shippingFee) : null,
+    statusCode: "submitted",
+    submittedAt: new Date(),
+    rawResponse: {
+      provider: "MANUAL",
+      providerName: params.providerName ?? "Thủ công",
+      note: params.note ?? null,
+    } as unknown as Record<string, unknown>,
+  });
+
+  const patch: Record<string, unknown> = {
+    providerCode: "MANUAL",
+    shippingStatus: "submitted",
+    updatedAt: new Date(),
+  };
+  if (params.shippingFee !== undefined) patch.shippingFee = params.shippingFee;
+  if (params.note !== undefined && order.note === null) patch.note = params.note;
+
+  await db
+    .update(orders)
+    .set(patch)
+    .where(and(eq(orders.id, params.orderId), eq(orders.shopId, params.shopId)));
+
+  return {
+    orderId: params.orderId,
+    trackingCode: params.trackingCode,
+    providerName: params.providerName ?? "Thủ công",
+    shippingStatus: "submitted",
+  };
 }

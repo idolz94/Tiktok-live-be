@@ -98,18 +98,17 @@ router.post(
 
     console.log("[PYTHON_STOP]", JSON.stringify(collector));
 
-    let session = null;
     if (!silent) {
-      session = await endRunningLiveSession({
+      // Fire-and-forget: don't wait for DB cleanup on the critical path
+      endRunningLiveSession({
         shopId: context.shop.id,
         tiktokUsername: username,
         reason: "manual_stop",
-      });
+      }).catch(() => {});
     }
 
     return mutateOk(response, "Đã gửi yêu cầu dừng live stream.", {
       collector,
-      session,
     });
   }),
 );
