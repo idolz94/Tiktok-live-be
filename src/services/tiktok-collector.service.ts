@@ -123,11 +123,7 @@ async function ingestComment(room: RoomState, data: any) {
   });
 }
 
-async function ingestLiveEvent(
-  room: RoomState,
-  eventType: string,
-  extra: Record<string, unknown> = {},
-) {
+async function ingestLiveEvent(room: RoomState, eventType: string) {
   const shop = await resolveShopForCollectorEvent({
     shopId: room.shopId,
     liveUsername: room.username,
@@ -211,7 +207,9 @@ async function onDisconnected(room: RoomState) {
 
   try {
     room.connection?.disconnect?.();
-  } catch {}
+  } catch {
+    // ignore disconnect errors
+  }
 }
 
 async function onError(room: RoomState, message: string) {
@@ -255,7 +253,9 @@ async function onError(room: RoomState, message: string) {
 
   try {
     room.connection?.disconnect?.();
-  } catch {}
+  } catch {
+    // ignore disconnect errors
+  }
 }
 
 async function onCollectorStopped(room: RoomState, options?: { silent?: boolean }) {
@@ -512,7 +512,9 @@ export async function stopTikTokCollector({
 
   try {
     room.connection?.disconnect?.();
-  } catch {}
+  } catch {
+    // ignore disconnect errors
+  }
 
   rooms.delete(normalized);
 

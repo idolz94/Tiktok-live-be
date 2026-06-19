@@ -1,8 +1,8 @@
-# Python TikTok Collector -> Node.js Backend -> Neon/Redis -> SSE -> Next.js
+# TikTok Collector -> Node.js Backend -> Neon/Redis -> SSE -> Next.js
 
 ## New backend endpoints
 
-### Python -> Node internal ingest
+### Collector -> Node internal ingest
 
 `POST /api/internal/live-comments/ingest`
 
@@ -12,9 +12,9 @@ Header:
 x-internal-api-key: <NODE_INTERNAL_API_KEY>
 ```
 
-This route receives each comment from Python, resolves the shop, creates/gets the live session, saves the comment into Neon Postgres, then broadcasts the `COMMENT` SSE event to connected clients of the same shop.
+This route receives each comment from the collector, resolves the shop, creates/gets the live session, saves the comment into Neon Postgres, then broadcasts the `COMMENT` SSE event to connected clients of the same shop.
 
-### Python -> Node internal live status
+### Collector -> Node internal live status
 
 ```txt
 POST /api/internal/live-events/connected
@@ -32,7 +32,7 @@ Auth can be via cookie, Authorization Bearer token, or query fallback:
 /api/live-stream/events?accessToken=<token>
 ```
 
-### Client -> Node -> Python collector control
+### Client -> Node -> Collector control
 
 ```txt
 POST /api/live-stream/start { "username": "@shop" }
@@ -43,11 +43,11 @@ POST /api/live-stream/stop  { "username": "@shop" }
 
 ```env
 NODE_INTERNAL_API_KEY=change_me
-PYTHON_COLLECTOR_BASE_URL=http://localhost:8765
+COLLECTOR_BASE_URL=http://localhost:8765
 COLLECTOR_CONTROL_API_KEY=change_me
 ```
 
-The Python `.env` must use the same values:
+The collector `.env` must use the same values:
 
 ```env
 NODE_COMMENT_INGEST_URL=http://localhost:3001/api/internal/live-comments/ingest
@@ -57,9 +57,9 @@ COLLECTOR_CONTROL_API_KEY=change_me
 
 ## Shop mapping
 
-The internal ingest route maps Python comments to a shop by either:
+The internal ingest route maps collector comments to a shop by either:
 
-1. `shopId` sent in Python payload, or
+1. `shopId` sent in collector payload, or
 2. `shops.default_tiktok_username` matching `liveUsername`.
 
 Set this via SQL (Neon SQL Editor or drizzle-kit):

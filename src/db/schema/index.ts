@@ -8,6 +8,7 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  index,
 } from "drizzle-orm/pg-core";
 
 // ─── users ────────────────────────────────────────────────────────────────────
@@ -230,12 +231,12 @@ export const orders = pgTable("orders", {
   depositStatus: text("deposit_status").default("unpaid"),
   paymentStatus: text("payment_status").default("unpaid"),
   shippingStatus: text("shipping_status").default("not_shipped"),
-  subtotalAmount: real("subtotal_amount").default(0),
-  shippingFee: real("shipping_fee").default(0),
-  discountAmount: real("discount_amount").default(0),
-  depositAmount: real("deposit_amount").default(0),
-  codAmount: real("cod_amount").default(0),
-  totalAmount: real("total_amount").default(0),
+  subtotalAmount: integer("subtotal_amount").default(0),
+  shippingFee: integer("shipping_fee").default(0),
+  discountAmount: integer("discount_amount").default(0),
+  depositAmount: integer("deposit_amount").default(0),
+  codAmount: integer("cod_amount").default(0),
+  totalAmount: integer("total_amount").default(0),
   currency: text("currency").default("VND"),
   note: text("note"),
   createdBy: uuid("created_by").references(() => users.id),
@@ -272,16 +273,50 @@ export const orderShipments = pgTable("order_shipments", {
   shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
   providerCode: text("provider_code").notNull(),
   trackingLabel: text("tracking_label"),
+  trackingCode: text("tracking_code"),
   externalOrderId: text("external_order_id"),
   fee: integer("fee"),
+  shippingFee: integer("shipping_fee"),
+  codAmount: integer("cod_amount"),
+  status: text("status").default("submitted").notNull(),
   statusCode: text("status_code"),
+  statusRaw: text("status_raw"),
+  paymentSide: text("payment_side"),
+  labelUrl: text("label_url"),
+  labelFormat: text("label_format"),
+  labelPaperSize: text("label_paper_size"),
   submittedAt: timestamp("submitted_at", { withTimezone: true }),
+  cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+  cancelReason: text("cancel_reason"),
   estimatedPickTime: text("estimated_pick_time"),
   estimatedDeliverTime: text("estimated_deliver_time"),
   rawResponse: jsonb("raw_response"),
+  createdByUserId: uuid("created_by_user_id").references(() => users.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// ─── shipment_events ──────────────────────────────────────────────────────────
+export const shipmentEvents = pgTable("shipment_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  shipmentId: uuid("shipment_id").notNull().references(() => orderShipments.id, { onDelete: "cascade" }),
+  orderId: uuid("order_id").notNull().references(() => orders.id, { onDelete: "cascade" }),
+  shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
+  eventType: text("event_type").notNull(),
+  fromStatus: text("from_status"),
+  toStatus: text("to_status"),
+  providerStatusRaw: text("provider_status_raw"),
+  payload: jsonb("payload"),
+  createdByUserId: uuid("created_by_user_id").references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("shipment_events_shipment_id_created_at_idx").on(table.shipmentId, table.createdAt),
+  index("shipment_events_order_id_created_at_idx").on(table.orderId, table.createdAt),
+  index("shipment_events_shop_id_created_at_idx").on(table.shopId, table.createdAt),
+]);
+
+// ─── live_comments ────────────────────────────────────────────────────────────
+
 
 // ─── live_comments ────────────────────────────────────────────────────────────
 export const liveComments = pgTable("live_comments", {

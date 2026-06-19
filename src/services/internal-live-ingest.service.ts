@@ -88,7 +88,7 @@ export async function ingestCollectorComment({
   const shop = await resolveShopForCollectorEvent({ shopId, liveUsername });
   if (!shop?.id) {
     throw new Error(
-      `Không tìm thấy shop cho TikTok username ${liveUsername}. Hãy set shops.default_tiktok_username hoặc gửi shopId từ Python.`,
+      `Không tìm thấy shop cho TikTok username ${liveUsername}. Hãy set shops.default_tiktok_username hoặc gửi shopId từ collector.`,
     );
   }
 

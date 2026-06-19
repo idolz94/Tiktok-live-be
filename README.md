@@ -15,7 +15,7 @@ Client Next.js / React Native
 ```
 
 ```txt
-Python TikTok Collector
+TikTok Collector
   ↓ x-internal-api-key
 Backend /api/internal/*
   ↓
@@ -70,7 +70,7 @@ DATABASE_URL=postgresql://user:pass@host.neon.tech/lumi?sslmode=require
 CLERK_SECRET_KEY=sk_...
 CLERK_PUBLISHABLE_KEY=pk_...
 NODE_INTERNAL_API_KEY=change_me
-PYTHON_COLLECTOR_BASE_URL=http://localhost:8765
+COLLECTOR_BASE_URL=http://localhost:8765
 COLLECTOR_CONTROL_API_KEY=change_me
 MOBILE_APP_KEY=change_me
 ```

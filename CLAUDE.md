@@ -20,7 +20,7 @@ Backend chịu trách nhiệm:
 * Quản lý shipping providers.
 * Quản lý live sessions.
 * Quản lý live comments.
-* Nhận internal comment/event từ Python Collector.
+* Nhận internal comment/event từ collector.
 * Lưu comment vào Neon bằng Drizzle.
 * Broadcast realtime SSE/WebSocket-ready event.
 * Tạo customer từ comment.
@@ -33,7 +33,7 @@ Backend chịu trách nhiệm:
 
 Backend không được để client gọi database trực tiếp.
 
-Python Collector không được ghi database trực tiếp.
+Collector không được ghi database trực tiếp.
 
 ---
 
@@ -50,7 +50,7 @@ Neon Postgres
 Realtime/comment flow:
 
 ```txt
-Python TikTok Collector
+TikTok Collector
         ↓ Internal API
 Backend Node.js
         ↓ Drizzle ORM
@@ -59,7 +59,7 @@ Neon Postgres
 Next.js Client / React Native App
 ```
 
-Python Collector chỉ gửi comment/event sang Backend.
+Collector chỉ gửi comment/event sang Backend.
 
 Backend lưu database và broadcast realtime.
 
@@ -77,7 +77,7 @@ Backend:
 * Drizzle ORM
 * Zod validation
 * SSE realtime
-* Python Collector internal API
+* Collector internal API
 
 Database:
 
@@ -93,14 +93,14 @@ Không dùng Supabase trong backend mới.
 
 * Backend là source of truth.
 * Client không gọi Neon trực tiếp.
-* Client không gọi Python trực tiếp.
-* Python không gọi Neon trực tiếp.
-* Python không dùng Drizzle.
-* Python không verify Clerk.
-* Python không check license.
-* Python không tạo customer.
-* Python không tạo order.
-* Python chỉ gửi comment/event sang Backend.
+* Client không gọi collector trực tiếp.
+* Collector không gọi Neon trực tiếp.
+* Collector không dùng Drizzle.
+* Collector không verify Clerk.
+* Collector không check license.
+* Collector không tạo customer.
+* Collector không tạo order.
+* Collector chỉ gửi comment/event sang Backend.
 * Backend lưu DB và broadcast realtime.
 * Internal API phải check `x-internal-api-key`.
 * Route validate body/query bằng Zod.
@@ -274,7 +274,7 @@ expires_at = now + 1 month
 | --------------- | ------------------- | ------------------------------------------------------------------------------------------ |
 | Next.js browser | Clerk session/token | Request wrapper gửi `credentials: "include"` và/hoặc `Authorization: Bearer <Clerk token>` |
 | React Native    | Clerk token         | Gửi `Authorization: Bearer <Clerk token>`                                                  |
-| Internal Python | Internal API key    | Gửi `x-internal-api-key`                                                                   |
+| Internal collector | Internal API key    | Gửi `x-internal-api-key`                                                                   |
 
 React Native có thể gửi thêm:
 
@@ -318,7 +318,7 @@ CLIENT_ORIGIN=http://localhost:3000
 MOBILE_APP_KEY=dev_mobile_key
 
 NODE_INTERNAL_API_KEY=change_me
-PYTHON_COLLECTOR_BASE_URL=http://localhost:8765
+COLLECTOR_BASE_URL=http://localhost:8765
 COLLECTOR_CONTROL_API_KEY=change_me
 ```
 
@@ -336,7 +336,7 @@ CLIENT_ORIGIN=https://lumilive.vn,https://www.lumilive.vn
 MOBILE_APP_KEY=your_strong_mobile_app_key
 
 NODE_INTERNAL_API_KEY=your_strong_internal_key
-PYTHON_COLLECTOR_BASE_URL=https://python-collector-domain.com
+COLLECTOR_BASE_URL=https://collector-domain.com
 COLLECTOR_CONTROL_API_KEY=your_strong_collector_key
 ```
 
@@ -696,12 +696,12 @@ Backend xử lý:
 5. Check user owns or can access shop.
 6. Resolve channel hoặc username.
 7. Create live_session.
-8. Call Python Collector /start.
+8. Call collector /start.
 9. Truyền { username, shopId, liveSessionId, platform }.
 10. Return liveSession to client.
 ```
 
-Python `/start` payload:
+Collector `/start` payload:
 
 ```json
 {
@@ -716,7 +716,7 @@ Python `/start` payload:
 
 ## Flow Comment
 
-Python gửi:
+Collector gửi:
 
 ```txt
 POST /api/internal/live-comments/ingest
@@ -753,7 +753,7 @@ Backend xử lý:
 1. Verify Clerk auth.
 2. Resolve user/shop/liveSession.
 3. Check permission.
-4. Call Python Collector /stop.
+4. Call collector /stop.
 5. End live session.
 6. Update ended_at, duration_seconds, status, end_reason.
 7. Broadcast COLLECTOR_STOPPED or LIVE_DISCONNECTED nếu cần.
@@ -836,7 +836,7 @@ Không chỉ dùng `shop_id + external_comment_id`, vì external id có thể tr
 
 ## Logic intent comment
 
-Phân tích intent ở Backend, không làm ở Python.
+Phân tích intent ở Backend, không làm ở collector.
 
 Các intent:
 
@@ -1020,13 +1020,13 @@ Không đưa Clerk secret hoặc long-lived token vào query string.
 
 ---
 
-## Python Collector contract
+## Collector contract
 
-Backend gọi Python:
+Backend gọi collector:
 
 ```txt
-POST PYTHON_COLLECTOR_BASE_URL/start
-POST PYTHON_COLLECTOR_BASE_URL/stop
+POST COLLECTOR_BASE_URL/start
+POST COLLECTOR_BASE_URL/stop
 ```
 
 Headers:
@@ -1035,7 +1035,7 @@ Headers:
 x-collector-control-api-key: COLLECTOR_CONTROL_API_KEY
 ```
 
-Python chỉ nhận:
+Collector chỉ nhận:
 
 ```txt
 username
@@ -1044,15 +1044,15 @@ liveSessionId
 platform
 ```
 
-Python không nhận Clerk user id.
+Collector không nhận Clerk user id.
 
-Python không check license.
+Collector không check license.
 
-Python không tạo live session.
+Collector không tạo live session.
 
-Python không tạo order.
+Collector không tạo order.
 
-Python không tạo customer.
+Collector không tạo customer.
 
 ---
 
@@ -1154,9 +1154,9 @@ node .gitnexus/run.cjs analyze --skip-agents-md
 * Do not expose `COLLECTOR_CONTROL_API_KEY`.
 * Do not expose shipping provider tokens.
 * Do not let client call Neon directly.
-* Do not let client call Python directly.
-* Do not let Python call Neon directly.
-* Do not let Python create customers/orders.
+* Do not let client call collector directly.
+* Do not let collector call Neon directly.
+* Do not let collector create customers/orders.
 * Do not put big business logic inside route handlers.
 * Do not bypass Drizzle service layer.
 * Do not commit unless the user explicitly asks.

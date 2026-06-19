@@ -32,6 +32,17 @@ function writeEvent(response: Response, event: string, data: unknown) {
 }
 
 export function addSseClient(client: SseClient) {
+  const existing = clients.get(client.id);
+  if (existing) {
+    console.log(`[SSE] replacing existing connection clientId=${client.id}`);
+    try {
+      existing.response.end();
+    } catch {
+      // already closed
+    }
+    clients.delete(client.id);
+  }
+
   clients.set(client.id, client);
 
   writeEvent(client.response, "CONNECTED", {
@@ -41,7 +52,9 @@ export function addSseClient(client: SseClient) {
   });
 
   return () => {
-    clients.delete(client.id);
+    if (clients.get(client.id) === client) {
+      clients.delete(client.id);
+    }
   };
 }
 

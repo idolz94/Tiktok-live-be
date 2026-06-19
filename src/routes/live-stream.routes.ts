@@ -6,7 +6,7 @@ import { mutateOk, ok } from "../lib/response.js";
 import { addSseClient, getSseStats } from "../lib/sse-hub.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { requireUsableAccountContext } from "../services/account.service.js";
-import { startPythonCollector, stopPythonCollector } from "../services/python-collector.service.js";
+import { startTikTokCollector, stopTikTokCollector } from "../services/tiktok-collector.service.js";
 import { endRunningLiveSession, getRunningLiveSession } from "../services/live-sessions.service.js";
 import { getLiveSessionComments } from "../services/live-comments.service.js";
 
@@ -60,16 +60,14 @@ router.post(
     const context = await requireUsableAccountContext(request);
     const body = usernameSchema.parse(request.body || {});
 
-    let pythonResult: any = null;
-
     try {
-      pythonResult = await startPythonCollector({
+      const collectorResult = await startTikTokCollector({
         username: body.username,
         shopId: context.shop.id,
       });
-      console.log("[PYTHON_START]", JSON.stringify(pythonResult));
+      console.log("[COLLECTOR_START]", JSON.stringify(collectorResult));
     } catch (error: any) {
-      console.error("[PYTHON_START_FAILED]", error?.message || error);
+      console.error("[COLLECTOR_START_FAILED]", error?.message || error);
       return response.status(400).json({
         ok: false,
         message: error?.message || "Không thể kết nối TikTok live. Kiểm tra lại username hoặc tài khoản chưa live.",
@@ -79,7 +77,6 @@ router.post(
     return mutateOk(response, "Đã bắt đầu kết nối live stream.", {
       status: "starting",
       username: body.username,
-      collector: pythonResult,
     });
   }),
 );
@@ -91,12 +88,12 @@ router.post(
     const username = String(request.body?.username || "").trim();
     const silent = Boolean(request.body?.silent);
 
-    const collector = await stopPythonCollector({
+    const collector = await stopTikTokCollector({
       username,
       silent,
     });
 
-    console.log("[PYTHON_STOP]", JSON.stringify(collector));
+    console.log("[COLLECTOR_STOP]", JSON.stringify(collector));
 
     if (!silent) {
       // Fire-and-forget: don't wait for DB cleanup on the critical path

@@ -71,8 +71,8 @@ export async function bootstrapAccountContext(request: Request): Promise<Account
       .limit(1),
   ]);
 
-  let user = userRows[0] ?? null;
-  let shopMember = memberRows[0] ?? null;
+  const user = userRows[0] ?? null;
+  const shopMember = memberRows[0] ?? null;
 
   // Auto-provision shop + membership if missing
   if (!shopMember?.shopId && user) {
@@ -81,14 +81,13 @@ export async function bootstrapAccountContext(request: Request): Promise<Account
       .values({ ownerId: userId, name: "Shop mới" })
       .returning();
 
-    const [newMember] = await db
+    await db
       .insert(shopMembers)
       .values({ shopId: newShop.id, userId, role: "owner", status: "active" })
       .returning();
 
-    shopMember = newMember;
-
     await createTrialLicense(newShop.id);
+    return getAccountContext(request);
   }
 
   return getAccountContext(request);

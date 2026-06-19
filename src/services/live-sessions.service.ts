@@ -301,10 +301,9 @@ export async function endRunningLiveSession({
   const finalEndedAt = endedAt || nowIso();
   const normalizedUsername = normalizeAtUsername(tiktokUsername);
 
-  let session: typeof liveSessions.$inferSelect | null = null;
+  let session: typeof liveSessions.$inferSelect | null;
 
-  if (liveSessionId) {
-    const rows = await db
+  if (liveSessionId) {    const rows = await db
       .select()
       .from(liveSessions)
       .where(and(eq(liveSessions.id, liveSessionId), eq(liveSessions.shopId, shopId)))
