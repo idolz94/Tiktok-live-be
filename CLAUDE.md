@@ -110,6 +110,8 @@ Không dùng Supabase trong backend mới.
 * Response chuẩn: `{ ok: true, data }` hoặc `{ ok: false, message }`.
 * Không expose secret ra client.
 * Không expose provider tokens ra client.
+* Với thay đổi route/contract, kiểm tra impact trước khi sửa để tránh đổi response shape âm thầm.
+* Khi task đụng auth/db/business logic, ưu tiên `backend-feature` hoặc `cross-repo-change` thay vì tự suy đoán flow.
 
 Không expose các biến sau:
 

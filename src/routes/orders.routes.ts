@@ -26,6 +26,7 @@ const router = Router();
 const createFromCommentSchema = z.object({
   comment: z.record(z.string(), z.unknown()),
   liveSessionId: z.string().nullish(),
+  customerAddressId: z.string().nullish(),
   price: z.number().optional(),
   quantity: z.number().optional(),
   note: z.string().optional().default(""),
@@ -46,7 +47,7 @@ const orderItemSchema = z.object({
   quantity: z.number().int().positive().default(1),
 });
 
-const shippingProviderCodeSchema = z.enum(["ghtk", "spx", "manual"]).default("ghtk");
+const shippingProviderCodeSchema = z.enum(["ghtk", "manual"]).default("ghtk");
 
 const feeShippingSchema = z.object({
   providerCode: shippingProviderCodeSchema.optional(),
@@ -120,6 +121,7 @@ router.post(
       userId: context.userId,
       comment: body.comment,
       liveSessionId: body.liveSessionId,
+      customerAddressId: body.customerAddressId,
       price: body.price,
       quantity: body.quantity,
       note: body.note,

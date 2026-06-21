@@ -133,6 +133,7 @@ export async function createOrderFromComment({
   userId,
   comment,
   liveSessionId,
+  customerAddressId,
   price = DEFAULT_PRICE,
   quantity = DEFAULT_QUANTITY,
   note = "",
@@ -141,6 +142,7 @@ export async function createOrderFromComment({
   userId: string;
   comment: Record<string, unknown>;
   liveSessionId?: string | null;
+  customerAddressId?: string | null;
   price?: number;
   quantity?: number;
   note?: string;
@@ -159,6 +161,8 @@ export async function createOrderFromComment({
   const safeQuantity = Number.isFinite(Number(quantity)) ? Number(quantity) : DEFAULT_QUANTITY;
 
   const customer = await findOrCreateCustomer({ shopId, tiktokUsername: customerTiktokUsername, displayName, avatarUrl });
+
+  const normalizedCustomerAddressId = customerAddressId || null;
 
   const defaultAddress = customer?.id
     ? await db
@@ -187,7 +191,7 @@ export async function createOrderFromComment({
       customerPhone: "",
       customerAddress: "",
       customerAvatarUrl: avatarUrl ?? null,
-      customerAddressId: defaultAddress?.id ?? null,
+      customerAddressId: normalizedCustomerAddressId ?? defaultAddress?.id ?? null,
       commentText,
       color: preset?.color ?? null,
       status: "draft",

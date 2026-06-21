@@ -6,17 +6,12 @@ describe("normalizeShippingProviderCode", () => {
     expect(normalizeShippingProviderCode("ghtk")).toBe("ghtk");
   });
 
-  it("returns 'spx' for 'spx'", () => {
-    expect(normalizeShippingProviderCode("spx")).toBe("spx");
-  });
-
   it("returns 'manual' for 'manual'", () => {
     expect(normalizeShippingProviderCode("manual")).toBe("manual");
   });
 
   it("normalizes uppercase input", () => {
     expect(normalizeShippingProviderCode("GHTK")).toBe("ghtk");
-    expect(normalizeShippingProviderCode("SPX")).toBe("spx");
     expect(normalizeShippingProviderCode("MANUAL")).toBe("manual");
   });
 
@@ -33,14 +28,13 @@ describe("normalizeShippingProviderCode", () => {
 
   it("trims whitespace", () => {
     expect(normalizeShippingProviderCode("  ghtk  ")).toBe("ghtk");
-    expect(normalizeShippingProviderCode(" spx ")).toBe("spx");
+    expect(normalizeShippingProviderCode(" spx ")).toBe("ghtk");
   });
 });
 
 describe("getShippingProviderAdapter", () => {
   it("returns adapter with correct code for each provider", () => {
     expect(getShippingProviderAdapter("ghtk").code).toBe("ghtk");
-    expect(getShippingProviderAdapter("spx").code).toBe("spx");
     expect(getShippingProviderAdapter("manual").code).toBe("manual");
   });
 
@@ -50,7 +44,7 @@ describe("getShippingProviderAdapter", () => {
   });
 
   it("adapters have required methods", () => {
-    for (const code of ["ghtk", "spx", "manual"] as const) {
+    for (const code of ["ghtk", "manual"] as const) {
       const adapter = getShippingProviderAdapter(code);
       expect(typeof adapter.getFee).toBe("function");
       expect(typeof adapter.submit).toBe("function");

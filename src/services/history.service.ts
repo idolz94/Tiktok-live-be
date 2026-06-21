@@ -71,5 +71,5 @@ export async function listLiveHistory({ shopId, limit = 100 }: { shopId: string;
         orderCount: Math.max(Number(session.orderCount || 0), sessionOrders.length),
       };
     })
-    .filter((session) => Number(session.commentCount || 0) > 0 && Number(session.orderCount || 0) > 0);
+    .filter((session) => Number(session.commentCount || 0) > 0 || Number(session.orderCount || 0) > 0);
 }

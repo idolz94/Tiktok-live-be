@@ -17,7 +17,7 @@ export function createSpxAdapter(): ShippingProviderAdapter {
   };
 
   return {
-    code: "spx",
+    code: "ghtk",
     async getFee(_params: ShippingFeeParams): Promise<ShippingFeeResult> {
       return unsupported();
     },

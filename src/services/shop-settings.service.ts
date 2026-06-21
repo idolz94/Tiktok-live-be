@@ -70,3 +70,68 @@ export async function upsertProductDefaults(
 
   return next;
 }
+
+export type PrinterSettings = {
+  printerIp: string;
+  printerPort: number;
+  printerName: string;
+};
+
+const PRINTER_SETTINGS_KEY = "printer_settings";
+
+const defaultPrinterSettings: PrinterSettings = {
+  printerIp: "",
+  printerPort: 9100,
+  printerName: "",
+};
+
+export async function getPrinterSettings(shopId: string): Promise<PrinterSettings> {
+  const rows = await db
+    .select()
+    .from(shopSettings)
+    .where(and(eq(shopSettings.shopId, shopId), eq(shopSettings.key, PRINTER_SETTINGS_KEY)))
+    .limit(1);
+
+  const row = rows[0];
+  if (!row?.value) return defaultPrinterSettings;
+
+  const val = row.value as Record<string, unknown>;
+  return {
+    printerIp: typeof val.printerIp === "string" ? val.printerIp : "",
+    printerPort: typeof val.printerPort === "number" ? val.printerPort : 9100,
+    printerName: typeof val.printerName === "string" ? val.printerName : "",
+  };
+}
+
+export async function upsertPrinterSettings(
+  shopId: string,
+  payload: Partial<PrinterSettings>,
+): Promise<PrinterSettings> {
+  const current = await getPrinterSettings(shopId);
+  const next: PrinterSettings = {
+    printerIp: payload.printerIp !== undefined ? payload.printerIp : current.printerIp,
+    printerPort: payload.printerPort !== undefined ? payload.printerPort : current.printerPort,
+    printerName: payload.printerName !== undefined ? payload.printerName : current.printerName,
+  };
+
+  const existing = await db
+    .select({ id: shopSettings.id })
+    .from(shopSettings)
+    .where(and(eq(shopSettings.shopId, shopId), eq(shopSettings.key, PRINTER_SETTINGS_KEY)))
+    .limit(1);
+
+  if (existing.length > 0) {
+    await db
+      .update(shopSettings)
+      .set({ value: next, updatedAt: new Date() })
+      .where(and(eq(shopSettings.shopId, shopId), eq(shopSettings.key, PRINTER_SETTINGS_KEY)));
+  } else {
+    await db.insert(shopSettings).values({
+      shopId,
+      key: PRINTER_SETTINGS_KEY,
+      value: next,
+    });
+  }
+
+  return next;
+}
