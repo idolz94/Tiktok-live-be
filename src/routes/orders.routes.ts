@@ -121,6 +121,16 @@ const cancelShippingSchema = z.object({
 router.use(requireAuth);
 
 router.get(
+  "/spx/timeslots",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const serviceType = request.query.serviceType ? Number(request.query.serviceType) : undefined;
+    const slots = await getSpxTimeslots({ shopId: context.shop.id, serviceType });
+    return ok(response, { timeslots: slots });
+  }),
+);
+
+router.get(
   "/",
   asyncHandler(async (request, response) => {
     const context = await requireUsableAccountContext(request);
@@ -457,18 +467,6 @@ router.post(
       orderId: String(request.params.orderId),
     });
     return ok(response, { tracking: result });
-  }),
-);
-
-const timeslotsQuerySchema = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) });
-
-router.get(
-  "/spx/timeslots",
-  asyncHandler(async (request, response) => {
-    const context = await requireUsableAccountContext(request);
-    const { date } = timeslotsQuerySchema.parse(request.query);
-    const slots = await getSpxTimeslots({ shopId: context.shop.id, date });
-    return ok(response, { timeslots: slots });
   }),
 );
 

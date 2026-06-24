@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import { ApiError } from "../../lib/api-error.js";
 import { env } from "../../config/env.js";
 import { getSpxErrorMessage } from "./spx.errors.js";
@@ -18,15 +17,18 @@ function spxBase(environment: string): string {
   return env.spxApiBase || "https://test-stable.spx.vn";
 }
 
-function buildSign(payload: string): string {
+function buildHeaders(): Record<string, string> {
   const appId = env.spxAppId;
   const appSecret = env.spxAppSecret;
   if (!appId || !appSecret) throw new ApiError(500, "SPX app credentials chưa được cấu hình.", "SPX_APP_CREDS_MISSING");
   const timestamp = Math.floor(Date.now() / 1000);
   const randomNum = Math.floor(Math.random() * 1_000_000);
-  const raw = `${appId}_${timestamp}_${randomNum}_${payload}`;
-  const sign = crypto.createHmac("sha256", appSecret).update(raw).digest("hex");
-  return `${appId}_${timestamp}_${randomNum}_${sign}`;
+  return {
+    "app-id": appId,
+    "check-sign": appSecret,
+    "timestamp": String(timestamp),
+    "random-num": String(randomNum),
+  };
 }
 
 function throwSpxError(res: SpxResponse): never {
@@ -38,7 +40,7 @@ function throwSpxError(res: SpxResponse): never {
 
 async function spxPost(path: string, environment: string, body: unknown): Promise<unknown> {
   const payload = JSON.stringify(body);
-  const checkSign = buildSign(payload);
+  const spxHeaders = buildHeaders();
 
   let res: Response;
   try {
@@ -46,7 +48,7 @@ async function spxPost(path: string, environment: string, body: unknown): Promis
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "check-sign": checkSign,
+        ...spxHeaders,
       },
       body: payload,
     });
@@ -61,11 +63,25 @@ async function spxPost(path: string, environment: string, body: unknown): Promis
     throw new ApiError(502, "Không đọc được phản hồi từ SPX.", "SPX_PARSE_ERROR");
   }
 
+  const curlHeaders = Object.entries({ "Content-Type": "application/json", ...spxHeaders })
+    .map(([k, v]) => `-H '${k}: ${v}'`)
+    .join(" \\\n  ");
+  console.log(`[SPX curl] curl -X POST '${spxBase(environment)}${path}' \\\n  ${curlHeaders} \\\n  -d '${payload}'`);
+  console.log("[SPX response]", JSON.stringify(data));
+
   if (data.errcode !== 0) throwSpxError(data);
   return data.data;
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
+
+export async function spxCreateAccount(params: { phone: string; email?: string }): Promise<{ userId: number; userSecret: string }> {
+  const body = params.email ? { phone: params.phone, email: params.email } : { phone: params.phone };
+  const data = await spxPost("/open/api/v1/account/create", env.spxApiBase || "sandbox", body) as Record<string, unknown>;
+  return { userId: Number(data["user_id"]), userSecret: String(data["user_secret"]) };
+}
+
+
 
 export type SpxCreateOrderParams = {
   environment: string;
@@ -226,21 +242,28 @@ export async function spxGetFee(params: {
   return { fee: Number(data["estimated_shipping_fee"] ?? 0) };
 }
 
-export type SpxTimeslot = { id: number; name: string; startTime: number; endTime: number };
+export type SpxTimeslot = {
+  date: string;
+  pickupTime: number;
+  slots: Array<{ id: number; range: string }>;
+};
 
 export async function spxGetTimeslots(params: {
   environment: string;
   userId: number;
   userSecret: string;
-  pickupDate: string;
+  serviceType?: number;
 }): Promise<SpxTimeslot[]> {
-  const body = { user_id: params.userId, user_secret: params.userSecret, pickup_date: params.pickupDate };
-  const data = await spxPost("/open/api/v1/order/get_pickup_time", params.environment, body) as Record<string, unknown>;
-  const list = data["pickup_time_list"] as Array<Record<string, unknown>> ?? [];
-  return list.map((t) => ({
-    id: Number(t["pickup_time_id"] ?? 0),
-    name: String(t["pickup_time_name"] ?? ""),
-    startTime: Number(t["start_time"] ?? 0),
-    endTime: Number(t["end_time"] ?? 0),
+  const body = { user_id: params.userId, user_secret: params.userSecret, service_type: params.serviceType ?? 1 };
+  const data = await spxPost("/open/api/v1/order/get_pickup_time", params.environment, body) as Array<Record<string, unknown>>;
+  
+  if (!Array.isArray(data)) return [];
+  return data.map((d) => ({
+    date: String(d["date"] ?? ""),
+    pickupTime: Number(d["pickup_time"] ?? 0),
+    slots: (d["slots"] as Array<Record<string, unknown>> ?? []).map((s) => ({
+      id: Number(s["pickup_time_range_id"] ?? 0),
+      range: String(s["pickup_time_range"] ?? ""),
+    })),
   }));
 }

@@ -47,16 +47,19 @@ export async function getSpxCredentials(shopId: string): Promise<SpxCredentials>
     .limit(1);
 
   const row = rows[0];
-  if (!row) throw new ApiError(400, "Shop chưa cấu hình SPX hoặc SPX chưa được bật.", "SPX_NOT_CONFIGURED");
 
-  const cfg = row.extraConfig as Record<string, unknown> | null;
-  const userId = Number(cfg?.spx_user_id);
-  const userSecret = typeof cfg?.spx_user_secret === "string" ? cfg.spx_user_secret : "";
+  const userId = row
+    ? Number((row.extraConfig as Record<string, unknown> | null)?.spx_user_id)
+    : Number(env.spxUserId);
+  const userSecret = row
+    ? String((row.extraConfig as Record<string, unknown> | null)?.spx_user_secret ?? "")
+    : (env.spxUserSecret ?? "");
+  const environment = row?.environment ?? (env.spxApiBase?.includes("test") ? "sandbox" : "production");
 
   if (!userId || !userSecret) {
-    throw new ApiError(400, "Thông tin SPX của shop không đầy đủ, vui lòng kiểm tra cài đặt.", "SPX_CREDS_INCOMPLETE");
+    throw new ApiError(400, "Shop chưa cấu hình SPX hoặc SPX chưa được bật.", "SPX_NOT_CONFIGURED");
   }
 
-  return { userId, userSecret, environment: row.environment ?? "production" };
+  return { userId, userSecret, environment };
 }
 

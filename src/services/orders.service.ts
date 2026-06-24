@@ -947,10 +947,10 @@ export async function refreshShippingStatus(params: { shopId: string; orderId: s
   return tracking;
 }
 
-export async function getSpxTimeslots(params: { shopId: string; date: string }) {
+export async function getSpxTimeslots(params: { shopId: string; serviceType?: number }) {
   const { spxGetTimeslots } = await import("./providers/spx.service.js");
   const creds = await getSpxCredentials(params.shopId);
-  return spxGetTimeslots({ environment: creds.environment, userId: creds.userId, userSecret: creds.userSecret, pickupDate: params.date });
+  return spxGetTimeslots({ environment: creds.environment, userId: creds.userId, userSecret: creds.userSecret, serviceType: params.serviceType });
 }
 
 export type SubmitManualShippingParams = {
