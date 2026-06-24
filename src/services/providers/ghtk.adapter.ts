@@ -97,6 +97,7 @@ export function createGhtkAdapter(): ShippingProviderAdapter {
         trackingLabel: result.label,
         trackingCode: String(result.trackingId),
         externalOrderId: String(result.trackingId),
+        paymentSide: params.isFreeShip === 1 ? 1 : 0,
         fee: result.fee,
         insuranceFee: result.insuranceFee,
         estimatedPickTime: result.estimatedPickTime ?? null,

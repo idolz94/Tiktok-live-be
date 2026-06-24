@@ -86,9 +86,9 @@ const submitGhtkSchema = z.object({
 
 const manualShippingSchema = z.object({
   providerCode: shippingProviderCodeSchema.default("manual"),
-  trackingCode: z.string().min(1, "Mã vận đơn không được để trống"),
-  providerName: z.string().optional(),
+  paymentSide: z.union([z.literal(0), z.literal(1)]).default(0),
   shippingFee: z.number().min(0).optional(),
+  codAmount: z.number().min(0).optional(),
   note: z.string().optional(),
 });
 
@@ -245,8 +245,7 @@ router.post(
         ? await submitManualShipping({
             shopId: context.shop.id,
             orderId: String(request.params.orderId),
-            trackingCode: body.receiverAddress || body.pickAddress || body.pickName,
-            providerName: body.pickName,
+            paymentSide: body.isFreeShip === 1 ? 1 : 0,
             shippingFee: body.isFreeShip === 1 ? 0 : undefined,
             note: body.note,
           })
@@ -347,9 +346,9 @@ router.post(
     const result = await submitManualShipping({
       shopId: context.shop.id,
       orderId: String(request.params.orderId),
-      trackingCode: body.trackingCode,
-      providerName: body.providerName,
+      paymentSide: body.paymentSide,
       shippingFee: body.shippingFee,
+      codAmount: body.codAmount,
       note: body.note,
     });
 

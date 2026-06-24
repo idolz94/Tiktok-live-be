@@ -622,7 +622,7 @@ async function insertShipmentAndUpdateOrder({
     labelUrl: result.labelUrl ?? null,
     labelFormat: result.labelFormat ?? null,
     labelPaperSize: result.labelPaperSize ?? null,
-    paymentSide: result.paymentSide ?? null,
+    paymentSide: result.paymentSide === undefined || result.paymentSide === null ? null : String(result.paymentSide),
     rawResponse: result.rawResponse as Record<string, unknown> | null,
   });
 
@@ -686,11 +686,25 @@ export async function getShippingTracking(params: { shopId: string; orderId: str
 export type SubmitManualShippingParams = {
   shopId: string;
   orderId: string;
-  trackingCode: string;
-  providerName?: string;
+  paymentSide: 0 | 1;
   shippingFee?: number;
+  codAmount?: number;
   note?: string;
 };
+
+async function generateManualTrackingLabel(): Promise<string> {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const suffix = Math.floor(Math.random() * 1_000_000).toString().padStart(6, "0");
+    const label = `Lumi-${suffix}`;
+    const existing = await db
+      .select({ id: orderShipments.id })
+      .from(orderShipments)
+      .where(eq(orderShipments.trackingLabel, label))
+      .limit(1);
+    if (existing.length === 0) return label;
+  }
+  throw new Error("Failed to generate unique manual tracking label after 10 attempts");
+}
 
 export async function submitManualShipping(params: SubmitManualShippingParams) {
   const order = await assertOrderInShop(params.orderId, params.shopId);
@@ -703,16 +717,19 @@ export async function submitManualShipping(params: SubmitManualShippingParams) {
     throw badRequest("Đơn hàng đã có vận đơn. Hủy vận đơn cũ trước khi tạo mới.");
   }
 
+  const trackingLabel = await generateManualTrackingLabel();
+
   const result = {
     providerCode: "manual" as const,
-    trackingLabel: params.trackingCode,
-    trackingCode: params.trackingCode,
+    trackingLabel,
+    trackingCode: trackingLabel,
     externalOrderId: null,
     fee: params.shippingFee ?? null,
     status: "submitted" as const,
     statusCode: null,
     statusRaw: null,
-    rawResponse: { provider: "manual", providerName: params.providerName ?? "Thủ công" } as Record<string, unknown>,
+    paymentSide: params.paymentSide,
+    rawResponse: { provider: "manual" } as Record<string, unknown>,
   };
 
   await insertShipmentAndUpdateOrder({
@@ -722,6 +739,13 @@ export async function submitManualShipping(params: SubmitManualShippingParams) {
     result,
     note: params.note,
   });
+
+  if (params.codAmount !== undefined) {
+    await db
+      .update(orders)
+      .set({ codAmount: params.codAmount, updatedAt: new Date() })
+      .where(and(eq(orders.id, params.orderId), eq(orders.shopId, params.shopId)));
+  }
 
   return { ...result, orderId: params.orderId };
 }

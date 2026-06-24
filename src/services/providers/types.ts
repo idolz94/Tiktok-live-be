@@ -24,7 +24,7 @@ export type ShippingSubmitResult = {
   labelUrl?: string | null;
   labelFormat?: string | null;
   labelPaperSize?: string | null;
-  paymentSide?: string | null;
+  paymentSide?: 0 | 1 | null;
   rawResponse?: unknown;
 };
 
