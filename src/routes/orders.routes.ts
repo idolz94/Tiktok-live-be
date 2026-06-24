@@ -9,9 +9,13 @@ import {
   cancelShipment,
   createOrderFromComment,
   createShipment,
+  createSpxShipment,
   deleteOrder,
   getShippingFee,
   getShippingTracking,
+  getSpxShipmentLabel,
+  getSpxTimeslots,
+  refreshShippingStatus,
   listOrders,
   removeOrderItem,
   submitManualShipping,
@@ -47,7 +51,23 @@ const orderItemSchema = z.object({
   quantity: z.number().int().positive().default(1),
 });
 
-const shippingProviderCodeSchema = z.enum(["ghtk", "manual"]).default("ghtk");
+const shippingProviderCodeSchema = z.enum(["ghtk", "manual", "spx"]).default("ghtk");
+
+const submitSpxSchema = z.object({
+  providerCode: z.literal("spx"),
+  senderAddressId: z.string().uuid(),
+  serviceType: z.union([z.literal(1), z.literal(2)]).default(1),
+  collectType: z.union([z.literal(1), z.literal(2)]).default(1),
+  pickupTimeRangeId: z.number().int().positive().optional(),
+  parcelWeightGram: z.number().int().positive(),
+  parcelLengthCm: z.number().int().positive().optional(),
+  parcelWidthCm: z.number().int().positive().optional(),
+  parcelHeightCm: z.number().int().positive().optional(),
+  parcelItemName: z.string().max(200).optional(),
+  declaredValue: z.number().int().nonnegative().optional(),
+  note: z.string().optional(),
+  idempotencyKey: z.string().uuid(),
+});
 
 const feeShippingSchema = z.object({
   providerCode: shippingProviderCodeSchema.optional(),
@@ -386,6 +406,69 @@ router.patch(
       codAmount: body.codAmount,
     });
     return mutateOk(response, "Cập nhật đơn hàng thành công.", { order: updated });
+  }),
+);
+
+router.post(
+  "/:orderId/shipping/spx",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const body = submitSpxSchema.parse(request.body || {});
+
+    const result = await createSpxShipment({
+      shopId: context.shop.id,
+      orderId: String(request.params.orderId),
+      senderAddressId: body.senderAddressId,
+      serviceType: body.serviceType,
+      collectType: body.collectType,
+      pickupTimeRangeId: body.pickupTimeRangeId,
+      parcelWeightGram: body.parcelWeightGram,
+      parcelLengthCm: body.parcelLengthCm,
+      parcelWidthCm: body.parcelWidthCm,
+      parcelHeightCm: body.parcelHeightCm,
+      parcelItemName: body.parcelItemName,
+      declaredValue: body.declaredValue,
+      note: body.note,
+      idempotencyKey: body.idempotencyKey,
+    });
+
+    return mutateOk(response, "Tạo vận đơn SPX thành công.", { shipping: result });
+  }),
+);
+
+router.get(
+  "/:orderId/shipping/label",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const result = await getSpxShipmentLabel({
+      shopId: context.shop.id,
+      orderId: String(request.params.orderId),
+    });
+    return ok(response, result);
+  }),
+);
+
+router.post(
+  "/:orderId/shipping/refresh",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const result = await refreshShippingStatus({
+      shopId: context.shop.id,
+      orderId: String(request.params.orderId),
+    });
+    return ok(response, { tracking: result });
+  }),
+);
+
+const timeslotsQuerySchema = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) });
+
+router.get(
+  "/spx/timeslots",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const { date } = timeslotsQuerySchema.parse(request.query);
+    const slots = await getSpxTimeslots({ shopId: context.shop.id, date });
+    return ok(response, { timeslots: slots });
   }),
 );
 

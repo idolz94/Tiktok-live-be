@@ -1,4 +1,4 @@
-export type ShippingProviderCode = "ghtk" | "manual";
+export type ShippingProviderCode = "ghtk" | "manual" | "spx";
 
 export type ShippingFeeResult = {
   providerCode: ShippingProviderCode;

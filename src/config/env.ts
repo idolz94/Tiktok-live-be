@@ -50,6 +50,11 @@ export const env = {
   ghtkApiBase: readEnv("OPEN_API_GHTK", "https://services-staging.ghtklab.com"),
   ghtkApiToken: readEnv("API_TOKEN_GHTK"),
   ghtkPartnerCode: readEnv("GHTK_PARTNER_CODE"),
+
+  // SPX shipping
+  spxAppId: readEnv("SPX_APP_ID"),
+  spxAppSecret: readEnv("SPX_APP_SECRET"),
+  spxApiBase: readEnv("SPX_API_BASE", "https://test-stable.spx.vn"),
 };
 
 export function assertRequiredEnv() {

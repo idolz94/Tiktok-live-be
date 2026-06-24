@@ -20,6 +20,7 @@ import paymentRoutes from "./routes/payment.routes.js";
 import shopSettingsRoutes from "./routes/shop-settings.routes.js";
 import productPresetsRoutes from "./routes/product-presets.routes.js";
 import webhookGhtkRoutes from "./routes/webhook-ghtk.routes.js";
+import webhookSpxRoutes from "./routes/webhook-spx.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
 
 const allowedOrigins = env.clientOrigin
@@ -64,8 +65,9 @@ export function createApp() {
   app.use(cookieParser());
   app.use(morgan(env.nodeEnv === "production" ? "combined" : "dev"));
 
-  // Registered before requireKnownClient — GHTK sends server-side POST without Origin header
+  // Registered before requireKnownClient — providers send server-side POST without Origin header
   app.use("/api/webhooks/ghtk", webhookGhtkRoutes);
+  app.use("/api/webhooks/spx", webhookSpxRoutes);
 
   app.use(requireKnownClient);
 

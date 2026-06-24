@@ -1,6 +1,6 @@
 import { eq, and, inArray, sql, gte, lt } from "drizzle-orm";
 import { db } from "../lib/db.js";
-import { orders, orderItems, orderShipments, customerAddresses } from "../db/schema/index.js";
+import { orders, orderItems, orderShipments, customerAddresses, shopAddresses } from "../db/schema/index.js";
 import { badRequest, notFound } from "../lib/api-error.js";
 import { getCommentAvatar, getCommentDisplayName, getCommentText } from "../utils/comment.js";
 import { createOrderCode } from "../utils/id.js";
@@ -11,6 +11,8 @@ import { updateLiveSessionOrderCount } from "./live-sessions.service.js";
 import { matchPresetByComment } from "./product-presets.service.js";
 import { getCurrentLicense } from "./license.service.js";
 import { getShippingProviderAdapter, normalizeShippingProviderCode } from "./providers/registry.js";
+import { getSpxCredentials } from "./providers/credentials.js";
+import { spxGetLabel } from "./providers/spx.service.js";
 
 async function assertOrderLimitNotExceeded(shopId: string) {
   const license = await getCurrentLicense(shopId);
@@ -581,18 +583,50 @@ async function getCurrentShipment(orderId: string) {
   return rows[0] ?? null;
 }
 
+type InsertShipmentExtra = {
+  spxTrackingNo?: string;
+  serviceType?: number;
+  collectType?: number;
+  pickupTime?: number;
+  pickupTimeRangeId?: number;
+  providerShippingFee?: number;
+  parcelWeightGram?: number;
+  parcelLengthCm?: number;
+  parcelWidthCm?: number;
+  parcelHeightCm?: number;
+  parcelItemName?: string;
+  declaredValue?: number;
+  senderName?: string;
+  senderPhone?: string;
+  senderProvince?: string;
+  senderDistrict?: string;
+  senderWard?: string;
+  senderDetailAddress?: string;
+  receiverName?: string;
+  receiverPhone?: string;
+  receiverProvince?: string;
+  receiverDistrict?: string;
+  receiverWard?: string;
+  receiverDetailAddress?: string;
+  idempotencyKey?: string;
+  errorCode?: string;
+  errorMessage?: string;
+};
+
 async function insertShipmentAndUpdateOrder({
   orderId,
   shopId,
   providerCode,
   result,
   note,
+  extra,
 }: {
   orderId: string;
   shopId: string;
   providerCode: string;
   result: Awaited<ReturnType<ReturnType<typeof getShippingProviderAdapter>["submit"]>>;
   note?: string;
+  extra?: InsertShipmentExtra;
 }) {
   const patch: Record<string, unknown> = {
     providerCode: result.providerCode,
@@ -624,6 +658,34 @@ async function insertShipmentAndUpdateOrder({
     labelPaperSize: result.labelPaperSize ?? null,
     paymentSide: result.paymentSide === undefined || result.paymentSide === null ? null : String(result.paymentSide),
     rawResponse: result.rawResponse as Record<string, unknown> | null,
+    // SPX-specific columns
+    spxTrackingNo: extra?.spxTrackingNo ?? null,
+    serviceType: extra?.serviceType ?? null,
+    collectType: extra?.collectType ?? null,
+    pickupTime: extra?.pickupTime ?? null,
+    pickupTimeRangeId: extra?.pickupTimeRangeId ?? null,
+    providerShippingFee: extra?.providerShippingFee ?? null,
+    parcelWeightGram: extra?.parcelWeightGram ?? null,
+    parcelLengthCm: extra?.parcelLengthCm ?? null,
+    parcelWidthCm: extra?.parcelWidthCm ?? null,
+    parcelHeightCm: extra?.parcelHeightCm ?? null,
+    parcelItemName: extra?.parcelItemName ?? null,
+    declaredValue: extra?.declaredValue ?? null,
+    senderName: extra?.senderName ?? null,
+    senderPhone: extra?.senderPhone ?? null,
+    senderProvince: extra?.senderProvince ?? null,
+    senderDistrict: extra?.senderDistrict ?? null,
+    senderWard: extra?.senderWard ?? null,
+    senderDetailAddress: extra?.senderDetailAddress ?? null,
+    receiverName: extra?.receiverName ?? null,
+    receiverPhone: extra?.receiverPhone ?? null,
+    receiverProvince: extra?.receiverProvince ?? null,
+    receiverDistrict: extra?.receiverDistrict ?? null,
+    receiverWard: extra?.receiverWard ?? null,
+    receiverDetailAddress: extra?.receiverDetailAddress ?? null,
+    idempotencyKey: extra?.idempotencyKey ?? null,
+    errorCode: extra?.errorCode ?? null,
+    errorMessage: extra?.errorMessage ?? null,
   });
 
   await db.update(orders).set(patch).where(and(eq(orders.id, orderId), eq(orders.shopId, shopId)));
@@ -657,6 +719,178 @@ export async function submitOrderToGhtk(params: SubmitShippingParams) {
   return createShipment({ ...params, providerCode: "ghtk" });
 }
 
+export type CreateSpxShipmentParams = {
+  shopId: string;
+  orderId: string;
+  senderAddressId: string;
+  serviceType: 1 | 2;
+  collectType: 1 | 2;
+  pickupTimeRangeId?: number;
+  parcelWeightGram: number;
+  parcelLengthCm?: number;
+  parcelWidthCm?: number;
+  parcelHeightCm?: number;
+  parcelItemName?: string;
+  declaredValue?: number;
+  note?: string;
+  idempotencyKey: string;
+};
+
+export async function createSpxShipment(params: CreateSpxShipmentParams) {
+  // Idempotency check — return existing if already submitted with this key
+  const existing = await db
+    .select()
+    .from(orderShipments)
+    .where(eq(orderShipments.idempotencyKey, params.idempotencyKey))
+    .limit(1);
+  if (existing[0]) {
+    return { ...existing[0], orderId: params.orderId, idempotent: true };
+  }
+
+  const order = await assertOrderInShop(params.orderId, params.shopId);
+  if ((order.status ?? "") !== "draft") {
+    throw badRequest(`Không thể tạo vận đơn SPX cho đơn hàng ở trạng thái "${order.status}".`);
+  }
+
+  const currentShipment = await getCurrentShipment(params.orderId);
+  if (currentShipment && hasActiveShipment(currentShipment.status)) {
+    throw badRequest("Đơn hàng đã có vận đơn. Hủy vận đơn cũ trước khi tạo mới.");
+  }
+
+  // Hydrate sender address from shop addresses
+  const senderRows = await db
+    .select()
+    .from(shopAddresses)
+    .where(and(eq(shopAddresses.id, params.senderAddressId), eq(shopAddresses.shopId, params.shopId)))
+    .limit(1);
+  const sender = senderRows[0];
+  if (!sender) throw badRequest("Địa chỉ lấy hàng không tồn tại.");
+
+  // Receiver from order
+  const customerAddrRows = await db
+    .select()
+    .from(customerAddresses)
+    .where(eq(customerAddresses.id, order.customerAddressId ?? ""))
+    .limit(1);
+  const receiver = customerAddrRows[0];
+  if (!receiver) throw badRequest("Đơn hàng chưa có địa chỉ giao hàng.");
+
+  const submitParams = {
+    shopId: params.shopId,
+    orderId: params.orderId,
+    providerCode: "spx" as const,
+    pickName: sender.name ?? "",
+    pickTel: sender.phone ?? "",
+    pickAddress: sender.address ?? "",
+    pickProvince: sender.province ?? "",
+    pickDistrict: sender.district ?? "",
+    pickWard: sender.ward ?? "",
+    receiverName: receiver.name ?? "",
+    receiverTel: receiver.phone ?? "",
+    receiverAddress: receiver.address ?? "",
+    receiverProvince: receiver.province ?? "",
+    receiverDistrict: receiver.district ?? "",
+    receiverWard: receiver.ward ?? "",
+    spxServiceType: params.serviceType,
+    spxCollectType: params.collectType,
+    spxPickupTimeRangeId: params.pickupTimeRangeId,
+    parcelWeightGram: params.parcelWeightGram,
+    parcelLengthCm: params.parcelLengthCm,
+    parcelWidthCm: params.parcelWidthCm,
+    parcelHeightCm: params.parcelHeightCm,
+    parcelItemName: params.parcelItemName,
+    declaredValue: params.declaredValue,
+    codAmount: order.codAmount ?? 0,
+    note: params.note,
+  };
+
+  const provider = getShippingProviderAdapter("spx");
+  const result = await provider.submit(submitParams);
+
+  const spxResult = result as typeof result & { spxTrackingNo?: string; spxPickupTime?: number; errorCode?: string; errorMessage?: string };
+
+  await insertShipmentAndUpdateOrder({
+    orderId: params.orderId,
+    shopId: params.shopId,
+    providerCode: "spx",
+    result,
+    note: params.note,
+    extra: {
+      spxTrackingNo: spxResult.spxTrackingNo,
+      serviceType: params.serviceType,
+      collectType: params.collectType,
+      pickupTime: spxResult.spxPickupTime,
+      pickupTimeRangeId: params.pickupTimeRangeId,
+      providerShippingFee: result.fee ?? undefined,
+      parcelWeightGram: params.parcelWeightGram,
+      parcelLengthCm: params.parcelLengthCm,
+      parcelWidthCm: params.parcelWidthCm,
+      parcelHeightCm: params.parcelHeightCm,
+      parcelItemName: params.parcelItemName,
+      declaredValue: params.declaredValue,
+      senderName: sender.name ?? undefined,
+      senderPhone: sender.phone ?? undefined,
+      senderProvince: sender.province ?? undefined,
+      senderDistrict: sender.district ?? undefined,
+      senderWard: sender.ward ?? undefined,
+      senderDetailAddress: sender.address ?? undefined,
+      receiverName: receiver.name ?? undefined,
+      receiverPhone: receiver.phone ?? undefined,
+      receiverProvince: receiver.province ?? undefined,
+      receiverDistrict: receiver.district ?? undefined,
+      receiverWard: receiver.ward ?? undefined,
+      receiverDetailAddress: receiver.address ?? undefined,
+      idempotencyKey: params.idempotencyKey,
+      errorCode: spxResult.errorCode,
+      errorMessage: spxResult.errorMessage,
+    },
+  });
+
+  return { ...result, orderId: params.orderId };
+}
+
+export async function getSpxShipmentLabel(params: { shopId: string; orderId: string }) {
+  await assertOrderInShop(params.orderId, params.shopId);
+  const shipmentRows = await db
+    .select()
+    .from(orderShipments)
+    .where(eq(orderShipments.orderId, params.orderId))
+    .limit(1);
+
+  const shipment = shipmentRows[0];
+  if (!shipment) throw badRequest("Đơn hàng chưa có vận đơn.");
+  if (normalizeShippingProviderCode(shipment.providerCode) !== "spx") {
+    throw badRequest("Vận đơn này không phải SPX.");
+  }
+
+  const trackingNo = shipment.spxTrackingNo ?? shipment.trackingLabel;
+  if (!trackingNo) throw badRequest("Vận đơn SPX chưa có mã tracking.");
+
+  // Re-fetch if no URL or within 5 minutes of expiry
+  const now = new Date();
+  const expiresAt = shipment.labelExpiresAt;
+  const needRefresh = !shipment.labelUrl || !expiresAt || expiresAt.getTime() - now.getTime() < 5 * 60 * 1000;
+
+  if (!needRefresh) return { labelUrl: shipment.labelUrl! };
+
+  const creds = await getSpxCredentials(params.shopId);
+  const labelResult = await spxGetLabel({
+    environment: creds.environment,
+    userId: creds.userId,
+    userSecret: creds.userSecret,
+    trackingNo,
+  });
+
+  // Labels typically valid for 24h; store with expiry
+  const newExpiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  await db
+    .update(orderShipments)
+    .set({ labelUrl: labelResult.labelUrl, labelExpiresAt: newExpiresAt, updatedAt: now })
+    .where(eq(orderShipments.id, shipment.id));
+
+  return { labelUrl: labelResult.labelUrl };
+}
+
 export async function getShippingTracking(params: { shopId: string; orderId: string }) {
   await assertOrderInShop(params.orderId, params.shopId);
   const shipmentRows = await db
@@ -681,6 +915,42 @@ export async function getShippingTracking(params: { shopId: string; orderId: str
 
   const provider = getShippingProviderAdapter(providerCode);
   return provider.tracking({ shopId: params.shopId, orderId: params.orderId });
+}
+
+export async function refreshShippingStatus(params: { shopId: string; orderId: string }) {
+  await assertOrderInShop(params.orderId, params.shopId);
+  const shipmentRows = await db
+    .select()
+    .from(orderShipments)
+    .where(eq(orderShipments.orderId, params.orderId))
+    .limit(1);
+
+  const shipment = shipmentRows[0];
+  if (!shipment) throw badRequest("Đơn hàng chưa có vận đơn.");
+
+  const providerCode = normalizeShippingProviderCode(shipment.providerCode);
+  if (providerCode === "manual") throw badRequest("Vận đơn thủ công không hỗ trợ refresh trạng thái.");
+
+  const provider = getShippingProviderAdapter(providerCode);
+  const tracking = await provider.tracking({ shopId: params.shopId, orderId: params.orderId });
+
+  const now = new Date();
+  await db
+    .update(orderShipments)
+    .set({ status: tracking.status, statusCode: tracking.statusCode ?? null, statusRaw: tracking.statusCode ?? null, updatedAt: now })
+    .where(eq(orderShipments.id, shipment.id));
+  await db
+    .update(orders)
+    .set({ shippingStatus: tracking.status, updatedAt: now })
+    .where(eq(orders.id, shipment.orderId));
+
+  return tracking;
+}
+
+export async function getSpxTimeslots(params: { shopId: string; date: string }) {
+  const { spxGetTimeslots } = await import("./providers/spx.service.js");
+  const creds = await getSpxCredentials(params.shopId);
+  return spxGetTimeslots({ environment: creds.environment, userId: creds.userId, userSecret: creds.userSecret, pickupDate: params.date });
 }
 
 export type SubmitManualShippingParams = {
@@ -766,8 +1036,12 @@ export async function cancelShipment(params: { shopId: string; orderId: string; 
     return { providerCode: "manual", status: "cancelled", logId: null };
   }
 
+  if (providerCode === "spx" && shipment.status !== "pending_pickup") {
+    throw badRequest(`Chỉ có thể hủy vận đơn SPX ở trạng thái chờ lấy hàng (hiện tại: ${shipment.status}).`);
+  }
+
   const provider = getShippingProviderAdapter(providerCode);
-  const result = await provider.cancel({ shopId: params.shopId, orderId: params.orderId, trackingId: params.trackingId ?? shipment.trackingLabel ?? shipment.trackingCode ?? undefined });
+  const result = await provider.cancel({ shopId: params.shopId, orderId: params.orderId, trackingId: params.trackingId ?? shipment.spxTrackingNo ?? shipment.trackingLabel ?? shipment.trackingCode ?? undefined });
   const cancelledAt = new Date();
   await db
     .update(orderShipments)
