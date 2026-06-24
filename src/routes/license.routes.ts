@@ -44,8 +44,7 @@ const adminActivateSchema = z.object({
   price: z.number().min(0).default(0),
 });
 
-// Admin-only: gia hạn license cho user khác qua Clerk session
-// Chỉ cho phép user có id = env.adminUserId
+// Admin-only: gia hạn license cho user khác — chỉ cho phép user có id = env.adminUserId
 router.post(
   "/admin-activate",
   requireAuth,

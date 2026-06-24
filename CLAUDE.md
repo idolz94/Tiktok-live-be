@@ -10,8 +10,8 @@ Backend là **source of truth** của toàn bộ business logic.
 
 Backend chịu trách nhiệm:
 
-* Xác thực user bằng Clerk.
-* Map Clerk user sang `users` trong Neon.
+* Xác thực user bằng JWT.
+* Map user sang `users` trong Neon.
 * Bootstrap user / license / shops / channels / settings.
 * Quản lý user license.
 * Quản lý shop.
@@ -41,7 +41,7 @@ Collector không được ghi database trực tiếp.
 
 ```txt
 Next.js Client / React Native App
-        ↓ Clerk token/session
+        ↓ JWT token + Backend API
 Backend Node.js Express
         ↓ Drizzle ORM
 Neon Postgres
@@ -72,7 +72,7 @@ Backend:
 * Node.js
 * Express
 * TypeScript
-* Clerk Auth
+* JWT Auth (access token + refresh token)
 * Neon Postgres
 * Drizzle ORM
 * Zod validation
@@ -117,7 +117,8 @@ Không expose các biến sau:
 
 ```txt
 DATABASE_URL
-CLERK_SECRET_KEY
+JWT_SECRET
+JWT_REFRESH_SECRET
 NODE_INTERNAL_API_KEY
 COLLECTOR_CONTROL_API_KEY
 MOBILE_APP_KEY
@@ -233,30 +234,34 @@ order_items.order_id
 
 ## Auth rules
 
-Auth provider: Clerk.
+Auth provider: JWT (access token + refresh token tự build).
 
-Backend xác thực bằng Clerk token.
+Backend xác thực bằng JWT do chính backend cấp.
 
 Quy tắc:
 
-* Không tự build login/register bằng JWT cũ.
+* Không dùng Clerk.
 * Không dùng Supabase Auth.
 * Không dùng cookie `lumi_access_token` kiểu cũ.
-* Middleware auth verify Clerk token.
-* Sau khi verify Clerk token, backend map `clerk_user_id` sang `users`.
-* Protected route phải có `req.auth` hoặc context tương đương.
+* Middleware auth verify JWT (verify signature, expiry).
+* Sau khi verify JWT, backend resolve `userId` từ payload.
+* Protected route phải có `req.user` hoặc context tương đương.
 * Protected shop route phải check user có quyền với shop.
 * Protected app action phải check license còn active.
+* Access token ngắn hạn (15–60 phút).
+* Refresh token dài hạn, lưu trong DB hoặc Redis để có thể revoke.
+* Không đưa refresh token ra response body nếu dùng httpOnly cookie.
+* Không log token dưới bất kỳ hình thức nào.
 
 User mới:
 
 ```txt
-1. Clerk tạo user.
-2. Backend nhận webhook `user.created` hoặc bootstrap lần đầu.
-3. Backend tạo `users`.
-4. Backend tạo `user_licenses` mặc định 1 tháng.
-5. Backend tạo shop mặc định.
-6. Backend tạo shop_settings mặc định.
+1. Client gọi POST /api/auth/register.
+2. Backend tạo `users`.
+3. Backend tạo `user_licenses` mặc định 1 tháng.
+4. Backend tạo shop mặc định.
+5. Backend tạo shop_settings mặc định.
+6. Backend trả access token + refresh token.
 ```
 
 License mặc định:
@@ -274,8 +279,8 @@ expires_at = now + 1 month
 
 | Client          | Auth method         | Ghi chú                                                                                    |
 | --------------- | ------------------- | ------------------------------------------------------------------------------------------ |
-| Next.js browser | Clerk session/token | Request wrapper gửi `credentials: "include"` và/hoặc `Authorization: Bearer <Clerk token>` |
-| React Native    | Clerk token         | Gửi `Authorization: Bearer <Clerk token>`                                                  |
+| Next.js browser | JWT access token    | Request wrapper gửi `Authorization: Bearer <access_token>` |
+| React Native    | JWT access token    | Gửi `Authorization: Bearer <access_token>`                                                  |
 | Internal collector | Internal API key    | Gửi `x-internal-api-key`                                                                   |
 
 React Native có thể gửi thêm:
@@ -286,7 +291,7 @@ x-app-key: MOBILE_APP_KEY
 
 để backend phân biệt mobile app nếu cần.
 
-Nhưng quyền chính vẫn phải dựa trên Clerk token.
+Nhưng quyền chính vẫn phải dựa trên JWT token đã verify.
 
 ---
 
@@ -313,8 +318,10 @@ PORT=3001
 NODE_ENV=development
 
 DATABASE_URL=postgresql://...
-CLERK_SECRET_KEY=sk_test_xxx
-CLERK_PUBLISHABLE_KEY=pk_test_xxx
+JWT_SECRET=dev_secret_change_me
+JWT_REFRESH_SECRET=dev_refresh_secret_change_me
+JWT_EXPIRES_IN=15m
+JWT_REFRESH_EXPIRES_IN=30d
 
 CLIENT_ORIGIN=http://localhost:3000
 MOBILE_APP_KEY=dev_mobile_key
@@ -331,8 +338,10 @@ PORT=3001
 NODE_ENV=production
 
 DATABASE_URL=postgresql://...
-CLERK_SECRET_KEY=sk_live_xxx
-CLERK_PUBLISHABLE_KEY=pk_live_xxx
+JWT_SECRET=your_strong_jwt_secret
+JWT_REFRESH_SECRET=your_strong_refresh_secret
+JWT_EXPIRES_IN=15m
+JWT_REFRESH_EXPIRES_IN=30d
 
 CLIENT_ORIGIN=https://lumilive.vn,https://www.lumilive.vn
 MOBILE_APP_KEY=your_strong_mobile_app_key
@@ -691,7 +700,7 @@ POST /api/live-stream/start
 Backend xử lý:
 
 ```txt
-1. Verify Clerk auth.
+1. Verify JWT.
 2. Resolve current user.
 3. Check user license.
 4. Resolve shopId/currentShop.
@@ -752,7 +761,7 @@ POST /api/live-stream/stop
 Backend xử lý:
 
 ```txt
-1. Verify Clerk auth.
+1. Verify JWT.
 2. Resolve user/shop/liveSession.
 3. Check permission.
 4. Call collector /stop.
@@ -1150,8 +1159,9 @@ node .gitnexus/run.cjs analyze --skip-agents-md
 
 * Do not use Supabase in new code.
 * Do not restore Supabase Auth.
+* Do not use Clerk.
 * Do not expose `DATABASE_URL`.
-* Do not expose `CLERK_SECRET_KEY`.
+* Do not expose `JWT_SECRET` or `JWT_REFRESH_SECRET`.
 * Do not expose `NODE_INTERNAL_API_KEY`.
 * Do not expose `COLLECTOR_CONTROL_API_KEY`.
 * Do not expose shipping provider tokens.
