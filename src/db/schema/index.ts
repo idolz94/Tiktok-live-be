@@ -276,6 +276,7 @@ export const orderShipments = pgTable("order_shipments", {
   providerCode: text("provider_code").notNull(),
   trackingLabel: text("tracking_label"),
   trackingCode: text("tracking_code"),
+  trackingLink: text("tracking_link"),
   externalOrderId: text("external_order_id"),
   fee: integer("fee"),
   shippingFee: integer("shipping_fee"),

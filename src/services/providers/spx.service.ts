@@ -114,18 +114,17 @@ export type SpxCreateOrderParams = {
   parcelItemName: string;
   declaredValue?: number;
   codAmount: number;
+  voucherCode?: string;
   orderId: string;
   senderName: string;
   senderPhone: string;
   senderState: string;
   senderCity: string;
-  senderDistrict: string;
   senderDetailAddress: string;
   deliverName: string;
   deliverPhone: string;
   deliverState: string;
   deliverCity: string;
-  deliverDistrict: string;
   deliverDetailAddress: string;
   itemList?: SpxOrderItem[];
 };
@@ -142,23 +141,25 @@ export async function spxCreateOrder(params: SpxCreateOrderParams): Promise<SpxC
   // VN: high_value_processing_collection must be 1 when express_insured_value >= 3_000_000
   const highValue = insuredValue >= 3_000_000 ? 1 : params.highValueProcessingCollection;
 
+  const spxOrderId = params.orderId.replace(/-/g, "").slice(0, 32);
+
   const order: Record<string, unknown> = {
-    order_id: params.orderId,
+    order_id: spxOrderId,
     sender_info: {
       sender_name: params.senderName,
       sender_phone: toE164VN(params.senderPhone),
       sender_state: params.senderState,
       sender_city: params.senderCity,
-      sender_district: params.senderDistrict,
       sender_detail_address: params.senderDetailAddress,
+      sender_address_version: 2,
     },
     deliver_info: {
       deliver_name: params.deliverName,
       deliver_phone: toE164VN(params.deliverPhone),
       deliver_state: params.deliverState,
       deliver_city: params.deliverCity,
-      deliver_district: params.deliverDistrict,
       deliver_detail_address: params.deliverDetailAddress,
+      deliver_address_version: 2,
     },
     base_info: {
       service_type: params.serviceType,
@@ -169,6 +170,7 @@ export async function spxCreateOrder(params: SpxCreateOrderParams): Promise<SpxC
       high_value_processing_collection: highValue,
       cod_collection: isCod ? 1 : 0,
       cod_amount: isCod ? params.codAmount : 0,
+      ...(params.voucherCode ? { voucher_code: params.voucherCode } : {}),
       ...(params.collectType === 1 && params.pickupTime ? { pickup_time: params.pickupTime } : {}),
       ...(params.collectType === 1 && params.pickupTimeRangeId ? { pickup_time_range_id: params.pickupTimeRangeId } : {}),
     },
@@ -215,6 +217,7 @@ export async function spxCreateOrder(params: SpxCreateOrderParams): Promise<SpxC
 
 export type SpxTrackingResult = {
   trackingNo: string;
+  trackingLink: string | null;
   statusCode: number;
   statusText: string;
 };
@@ -227,8 +230,9 @@ export async function spxGetTracking(params: { environment: string; userId: numb
   if (!first) throw new ApiError(404, "SPX không tìm thấy đơn hàng.", "SPX_TRACKING_NOT_FOUND");
   return {
     trackingNo: String(first["tracking_no"] ?? params.trackingNo),
+    trackingLink: first["tracking_link"] ? String(first["tracking_link"]) : null,
     statusCode: Number(first["status_code"] ?? 0),
-    statusText: String(first["status_text"] ?? ""),
+    statusText: String(first["status_text"] ?? first["status"] ?? ""),
   };
 }
 
@@ -238,7 +242,13 @@ export async function spxCancelOrder(params: { environment: string; userId: numb
     user_secret: params.userSecret,
     tracking_no_list: [params.trackingNo],
   };
-  await spxPost("/open/api/v1/order/batch_cancel_order", params.environment, body);
+  const data = await spxPost("/open/api/v1/order/batch_cancel_order", params.environment, body) as Record<string, unknown> | null;
+  const failList = data?.["fail_list"] as Array<{ ret_code: number; message: string; tracking_no: string }> | undefined;
+  if (failList && failList.length > 0) {
+    const first = failList[0];
+    const msg = getSpxErrorMessage(first.ret_code, first.message);
+    throw new ApiError(422, msg, "SPX_CANCEL_FAILED", { errorCode: first.ret_code, trackingNo: first.tracking_no });
+  }
 }
 
 export type SpxLabelResult = { trackingNo: string; labelUrl: string };
@@ -307,11 +317,9 @@ export async function spxBatchCheckFee(params: {
   codAmount?: number;
   senderState: string;
   senderCity: string;
-  senderDistrict: string;
   senderDetailAddress?: string;
   deliverState: string;
   deliverCity: string;
-  deliverDistrict: string;
   deliverDetailAddress?: string;
 }): Promise<SpxFeeResult> {
   const body = {
@@ -323,8 +331,8 @@ export async function spxBatchCheckFee(params: {
         sender_info: {
           sender_state: params.senderState,
           sender_city: params.senderCity,
-          sender_district: params.senderDistrict,
           sender_detail_address: params.senderDetailAddress ?? "",
+          sender_address_version: 2,
         },
         fulfillment_info: {
           cod_collection: params.codAmount ? 1 : 0,
@@ -333,8 +341,8 @@ export async function spxBatchCheckFee(params: {
         deliver_info: {
           deliver_state: params.deliverState,
           deliver_city: params.deliverCity,
-          deliver_district: params.deliverDistrict,
           deliver_detail_address: params.deliverDetailAddress ?? "",
+          deliver_address_version: 2,
         },
         parcel_info: {
           parcel_weight: params.parcelWeightKg,
@@ -370,14 +378,12 @@ export type SpxEstimateAddressAdjustmentFeeParams = {
   trackingNo: string;
   senderState: string;
   senderCity: string;
-  senderDistrict: string;
   senderPostCode: string;
   senderDetailAddress: string;
   senderLongitude?: string;
   senderLatitude?: string;
   deliverState: string;
   deliverCity: string;
-  deliverDistrict: string;
   deliverPostCode: string;
   deliverDetailAddress: string;
   deliverLongitude?: string;
@@ -400,14 +406,12 @@ export async function spxEstimateAddressAdjustmentFee(
     tracking_no: params.trackingNo,
     sender_state: params.senderState,
     sender_city: params.senderCity,
-    sender_district: params.senderDistrict,
     sender_post_code: params.senderPostCode,
     sender_detail_address: params.senderDetailAddress,
     ...(params.senderLongitude && { sender_longitude: params.senderLongitude }),
     ...(params.senderLatitude && { sender_latitude: params.senderLatitude }),
     deliver_state: params.deliverState,
     deliver_city: params.deliverCity,
-    deliver_district: params.deliverDistrict,
     deliver_post_code: params.deliverPostCode,
     deliver_detail_address: params.deliverDetailAddress,
     ...(params.deliverLongitude && { deliver_longitude: params.deliverLongitude }),
@@ -439,7 +443,7 @@ export async function spxGetTimeslots(params: {
 }): Promise<SpxTimeslot[]> {
   const body = { user_id: params.userId, user_secret: params.userSecret, service_type: params.serviceType ?? 1 };
   const data = await spxPost("/open/api/v1/order/get_pickup_time", params.environment, body) as Array<Record<string, unknown>>;
-  
+
   if (!Array.isArray(data)) return [];
   return data.map((d) => ({
     date: String(d["date"] ?? ""),
@@ -448,5 +452,36 @@ export async function spxGetTimeslots(params: {
       id: Number(s["pickup_time_range_id"] ?? 0),
       range: String(s["pickup_time_range"] ?? ""),
     })),
+  }));
+}
+
+export type SpxVoucher = {
+  voucherCode: string;
+  voucherName: string;
+  discountBy: number;
+  voucherAmount: string;
+  voucherCap: string;
+  minSpend: string;
+  validStartTime: number;
+  validEndTime: number;
+};
+
+export async function spxListVouchers(params: {
+  environment: string;
+  userId: number;
+  userSecret: string;
+}): Promise<SpxVoucher[]> {
+  const body = { user_id: params.userId, user_secret: params.userSecret };
+  const data = await spxPost("/open/api/v1/order/list_voucher", params.environment, body) as Record<string, unknown>;
+  const vouchers = data["vouchers"] as Array<Record<string, unknown>> | undefined ?? [];
+  return vouchers.map((v) => ({
+    voucherCode: String(v["voucher_code"] ?? ""),
+    voucherName: String(v["voucher_name"] ?? ""),
+    discountBy: Number(v["discount_by"] ?? 0),
+    voucherAmount: String(v["voucher_amount"] ?? ""),
+    voucherCap: String(v["voucher_cap"] ?? ""),
+    minSpend: String(v["min_spend"] ?? ""),
+    validStartTime: Number(v["valid_start_time"] ?? 0),
+    validEndTime: Number(v["valid_end_time"] ?? 0),
   }));
 }

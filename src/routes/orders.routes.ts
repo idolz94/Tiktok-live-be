@@ -14,6 +14,7 @@ import {
   getShippingTracking,
   getSpxShipmentLabel,
   getSpxTimeslots,
+  listSpxVouchers,
   refreshShippingStatus,
   listOrders,
   removeOrderItem,
@@ -55,11 +56,9 @@ const shippingProviderCodeSchema = z.enum(["manual", "spx"]).default("manual");
 const feeSchema = z.object({
   providerCode: z.literal("spx"),
   pickProvince: z.string().min(1),
-  pickDistrict: z.string().min(1),
   pickWard: z.string().min(1),
   pickAddress: z.string().optional(),
   receiverProvince: z.string().min(1),
-  receiverDistrict: z.string().min(1),
   receiverWard: z.string().min(1),
   receiverAddress: z.string().optional(),
   weightGram: z.number().int().positive().optional(),
@@ -80,6 +79,8 @@ const submitSpxSchema = z.object({
   declaredValue: z.number().int().nonnegative().optional(),
   note: z.string().optional(),
   idempotencyKey: z.string().uuid(),
+  voucherCode: z.string().trim().min(1).optional(),
+  customerAddressId: z.string().uuid().optional(),
 });
 
 const manualShippingSchema = z.object({
@@ -99,6 +100,15 @@ const cancelShippingSchema = z.object({
 router.use(requireAuth);
 
 router.get(
+  "/spx/vouchers",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const vouchers = await listSpxVouchers({ shopId: context.shop.id });
+    return ok(response, { vouchers });
+  }),
+);
+
+router.get(
   "/spx/timeslots",
   asyncHandler(async (request, response) => {
     const context = await requireUsableAccountContext(request);
@@ -113,7 +123,8 @@ router.get(
   asyncHandler(async (request, response) => {
     const context = await requireUsableAccountContext(request);
     const shippingStatus = typeof request.query.shippingStatus === "string" ? request.query.shippingStatus : undefined;
-    const orders = await listOrders(context.shop.id, shippingStatus);
+    const status = typeof request.query.status === "string" ? statusSchema.shape.status.parse(request.query.status) : undefined;
+    const orders = await listOrders(context.shop.id, shippingStatus, status);
     return ok(response, { orders });
   }),
 );
@@ -305,11 +316,9 @@ router.post(
       orderId: String(request.params.orderId),
       providerCode: body.providerCode,
       pickProvince: body.pickProvince,
-      pickDistrict: body.pickDistrict,
       pickWard: body.pickWard,
       pickAddress: body.pickAddress,
       receiverProvince: body.receiverProvince,
-      receiverDistrict: body.receiverDistrict,
       receiverWard: body.receiverWard,
       receiverAddress: body.receiverAddress,
       weight: body.weightGram,
@@ -340,6 +349,8 @@ router.post(
       declaredValue: body.declaredValue,
       note: body.note,
       idempotencyKey: body.idempotencyKey,
+      voucherCode: body.voucherCode,
+      customerAddressId: body.customerAddressId,
     });
 
     return mutateOk(response, "Tạo vận đơn SPX thành công.", { shipping: result });

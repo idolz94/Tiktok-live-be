@@ -40,7 +40,7 @@ router.post("/", async (req, res) => {
       return;
     }
 
-    const { tracking_no, status_code } = req.body as Record<string, unknown>;
+    const { tracking_no, status_code, tracking_link } = req.body as Record<string, unknown>;
     if (!tracking_no || status_code == null) {
       res.status(200).json({ ok: false, message: "Missing fields" });
       return;
@@ -63,7 +63,13 @@ router.post("/", async (req, res) => {
     const now = new Date();
     await db
       .update(orderShipments)
-      .set({ status: shippingStatus, statusCode: String(statusCodeNum), statusRaw: String(statusCodeNum), updatedAt: now })
+      .set({
+        status: shippingStatus,
+        statusCode: String(statusCodeNum),
+        statusRaw: String(statusCodeNum),
+        ...(tracking_link ? { trackingLink: String(tracking_link) } : {}),
+        updatedAt: now,
+      })
       .where(eq(orderShipments.id, shipment.id));
 
     await db
@@ -75,6 +81,7 @@ router.post("/", async (req, res) => {
       orderId: shipment.orderId,
       shipmentId: shipment.id,
       trackingNo: tracking_no,
+      trackingLink: tracking_link ?? null,
       statusCode: statusCodeNum,
       shippingStatus,
     });

@@ -107,6 +107,7 @@ router.post(
     return ok(response, {
       user: { id: user.id, username: user.username, email: user.email, fullName: user.fullName },
       accessToken,
+      refreshToken,
     });
   }),
 );
@@ -133,6 +134,7 @@ router.post(
     return ok(response, {
       user: { id: user.id, username: user.username, email: user.email, fullName: user.fullName },
       accessToken,
+      refreshToken,
     });
   }),
 );
@@ -154,7 +156,7 @@ router.post(
 
     setTokenCookies(response, newAccessToken, newRefreshToken);
 
-    return ok(response, { accessToken: newAccessToken });
+    return ok(response, { accessToken: newAccessToken, refreshToken: newRefreshToken });
   }),
 );
 

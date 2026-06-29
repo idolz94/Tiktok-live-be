@@ -10,6 +10,7 @@ import { findDbLiveCommentId, updateLiveCommentOrder } from "./live-comments.ser
 import { updateLiveSessionOrderCount } from "./live-sessions.service.js";
 import { matchPresetByComment } from "./product-presets.service.js";
 import { getCurrentLicense } from "./license.service.js";
+import { spxListVouchersForShop } from "./providers/spx.adapter.js";
 import { getShippingProviderAdapter, normalizeShippingProviderCode } from "./providers/registry.js";
 import { getSpxCredentials } from "./providers/credentials.js";
 import { spxGetLabel } from "./providers/spx.service.js";
@@ -64,9 +65,9 @@ function reconcileOrderAmounts(order: {
   const shippingFee = toMoney(order.shippingFee);
   const discountAmount = toMoney(order.discountAmount);
   const depositAmount = toMoney(order.depositAmount);
-  const codAmount = toMoney(order.codAmount);
   const totalAmount = Math.max(0, subtotalAmount + shippingFee - discountAmount);
   const remainingAmount = Math.max(0, totalAmount - depositAmount);
+  const codAmount = remainingAmount;
   return { subtotalAmount, shippingFee, discountAmount, depositAmount, codAmount, totalAmount, remainingAmount };
 }
 
@@ -116,10 +117,12 @@ async function attachProducts<T extends { id: string; customerAddressId?: string
   }));
 }
 
-export async function listOrders(shopId: string, shippingStatus?: string) {
-  const condition = shippingStatus
-    ? and(eq(orders.shopId, shopId), eq(orders.shippingStatus, shippingStatus))
-    : eq(orders.shopId, shopId);
+export async function listOrders(shopId: string, shippingStatus?: string, status?: string) {
+  const condition = and(
+    eq(orders.shopId, shopId),
+    shippingStatus ? eq(orders.shippingStatus, shippingStatus) : undefined,
+    status ? eq(orders.status, status) : undefined,
+  );
 
   const rows = await db
     .select()
@@ -557,12 +560,10 @@ export type EstimateAddressAdjustmentFeeParams = {
   trackingNo: string;
   senderState: string;
   senderCity: string;
-  senderDistrict: string;
   senderPostCode: string;
   senderDetailAddress: string;
   deliverState: string;
   deliverCity: string;
-  deliverDistrict: string;
   deliverPostCode: string;
   deliverDetailAddress: string;
 };
@@ -574,12 +575,10 @@ export async function estimateAddressAdjustmentFee(params: EstimateAddressAdjust
     trackingNo: params.trackingNo,
     senderState: params.senderState,
     senderCity: params.senderCity,
-    senderDistrict: params.senderDistrict,
     senderPostCode: params.senderPostCode,
     senderDetailAddress: params.senderDetailAddress,
     deliverState: params.deliverState,
     deliverCity: params.deliverCity,
-    deliverDistrict: params.deliverDistrict,
     deliverPostCode: params.deliverPostCode,
     deliverDetailAddress: params.deliverDetailAddress,
   });
@@ -754,6 +753,10 @@ export async function createShipment(params: SubmitShippingParams) {
   return { ...result, orderId: params.orderId };
 }
 
+export async function listSpxVouchers({ shopId }: { shopId: string }) {
+  return spxListVouchersForShop(shopId);
+}
+
 export type CreateSpxShipmentParams = {
   shopId: string;
   orderId: string;
@@ -770,6 +773,8 @@ export type CreateSpxShipmentParams = {
   declaredValue?: number;
   note?: string;
   idempotencyKey: string;
+  voucherCode?: string;
+  customerAddressId?: string;
 };
 
 export async function createSpxShipment(params: CreateSpxShipmentParams) {
@@ -802,14 +807,24 @@ export async function createSpxShipment(params: CreateSpxShipmentParams) {
   const sender = senderRows[0];
   if (!sender) throw badRequest("Địa chỉ lấy hàng không tồn tại.");
 
-  // Receiver from order
+  // Receiver from order or explicit override
+  const addrId = params.customerAddressId ?? order.customerAddressId;
+  if (!addrId) throw badRequest("Đơn hàng chưa có địa chỉ giao hàng.");
   const customerAddrRows = await db
     .select()
     .from(customerAddresses)
-    .where(eq(customerAddresses.id, order.customerAddressId ?? ""))
+    .where(eq(customerAddresses.id, addrId))
     .limit(1);
   const receiver = customerAddrRows[0];
-  if (!receiver) throw badRequest("Đơn hàng chưa có địa chỉ giao hàng.");
+  if (!receiver) throw badRequest("Địa chỉ giao hàng không tồn tại.");
+
+  const items = await db
+    .select({ price: orderItems.price, quantity: orderItems.quantity })
+    .from(orderItems)
+    .where(eq(orderItems.orderId, params.orderId));
+  const subtotalAmount = items.reduce((sum, item) => sum + toMoney(item.price) * (item.quantity ?? 1), 0);
+  const amounts = reconcileOrderAmounts({ ...order, subtotalAmount });
+  await db.update(orders).set({ ...amounts, updatedAt: new Date() }).where(and(eq(orders.id, params.orderId), eq(orders.shopId, params.shopId)));
 
   const submitParams = {
     shopId: params.shopId,
@@ -819,13 +834,11 @@ export async function createSpxShipment(params: CreateSpxShipmentParams) {
     pickTel: sender.phone ?? "",
     pickAddress: sender.address ?? "",
     pickProvince: sender.province ?? "",
-    pickDistrict: sender.district ?? "",
     pickWard: sender.ward ?? "",
     receiverName: receiver.name ?? "",
     receiverTel: receiver.phone ?? "",
     receiverAddress: receiver.address ?? "",
     receiverProvince: receiver.province ?? "",
-    receiverDistrict: receiver.district ?? "",
     receiverWard: receiver.ward ?? "",
     spxServiceType: params.serviceType,
     spxCollectType: params.collectType,
@@ -837,7 +850,8 @@ export async function createSpxShipment(params: CreateSpxShipmentParams) {
     parcelHeightCm: params.parcelHeightCm,
     parcelItemName: params.parcelItemName,
     declaredValue: params.declaredValue,
-    codAmount: order.subtotalAmount ?? order.codAmount ?? 0,
+    codAmount: amounts.remainingAmount,
+    voucherCode: params.voucherCode,
     note: params.note,
   };
 
@@ -943,8 +957,9 @@ export async function getShippingTracking(params: { shopId: string; orderId: str
   const providerCode = normalizeShippingProviderCode(shipment.providerCode);
   if (providerCode === "manual") {
     return {
-      providerCode: "manual",
+      providerCode: "manual" as const,
       trackingCode: shipment.trackingLabel ?? shipment.trackingCode ?? null,
+      trackingLink: shipment.trackingLink ?? null,
       status: shipment.status ?? "submitted",
       statusCode: shipment.statusCode ?? null,
       raw: shipment.rawResponse ?? null,
@@ -952,7 +967,8 @@ export async function getShippingTracking(params: { shopId: string; orderId: str
   }
 
   const provider = getShippingProviderAdapter(providerCode);
-  return provider.tracking({ shopId: params.shopId, orderId: params.orderId });
+  const tracking = await provider.tracking({ shopId: params.shopId, orderId: params.orderId });
+  return { ...tracking, trackingLink: tracking.trackingLink ?? shipment.trackingLink ?? null };
 }
 
 export async function refreshShippingStatus(params: { shopId: string; orderId: string }) {
@@ -975,14 +991,20 @@ export async function refreshShippingStatus(params: { shopId: string; orderId: s
   const now = new Date();
   await db
     .update(orderShipments)
-    .set({ status: tracking.status, statusCode: tracking.statusCode ?? null, statusRaw: tracking.statusCode ?? null, updatedAt: now })
+    .set({
+      status: tracking.status,
+      statusCode: tracking.statusCode ?? null,
+      statusRaw: tracking.statusCode ?? null,
+      ...(tracking.trackingLink ? { trackingLink: tracking.trackingLink } : {}),
+      updatedAt: now,
+    })
     .where(eq(orderShipments.id, shipment.id));
   await db
     .update(orders)
     .set({ shippingStatus: tracking.status, updatedAt: now })
     .where(eq(orders.id, shipment.orderId));
 
-  return tracking;
+  return { ...tracking, trackingLink: tracking.trackingLink ?? shipment.trackingLink ?? null };
 }
 
 export async function getSpxTimeslots(params: { shopId: string; serviceType?: number }) {

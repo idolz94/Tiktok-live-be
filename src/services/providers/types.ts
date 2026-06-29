@@ -31,6 +31,7 @@ export type ShippingSubmitResult = {
 export type ShippingTrackingResult = {
   providerCode: ShippingProviderCode;
   trackingCode?: string | null;
+  trackingLink?: string | null;
   status?: string;
   statusCode?: string | null;
   statusText?: string | null;

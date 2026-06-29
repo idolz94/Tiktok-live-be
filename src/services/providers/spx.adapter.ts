@@ -1,17 +1,14 @@
 import { ApiError } from "../../lib/api-error.js";
 
-// ponytail: SPX city = xã (pickWard), district = huyện (pickDistrict), detailAddress = free-text (pickAddress)
-// SPX receives full names with prefixes ("Tỉnh Lạng Sơn", "Huyện Bắc Sơn", "Xã Bắc Sơn") as-is
+// SPX address version 2 uses state + city + detailAddress, no district.
 const SPX_DEFAULT_SENDER = {
   state: "Tỉnh Lạng Sơn",
   city: "Xã Bắc Sơn",
-  district: "Huyện Bắc Sơn",
   detailAddress: "Khối Phố Minh Khai",
 };
 const SPX_DEFAULT_RECEIVER = {
   state: "Tỉnh An Giang",
   city: "Xã An Phú",
-  district: "Xã An Phú",
   detailAddress: "Số nhà 37, Ấp An Hưng",
 };
 import { getSpxCredentials } from "./credentials.js";
@@ -23,6 +20,7 @@ import {
   spxEstimateAddressAdjustmentFee,
   spxGetOrderFee,
   spxGetTracking,
+  spxListVouchers,
 } from "./spx.service.js";
 import type {
   ShippingCancelParams,
@@ -72,11 +70,9 @@ export function createSpxAdapter(): ShippingProviderAdapter {
         parcelWeightKg: params.weight ? params.weight / 1000 : 0.3,
         senderState: params.pickProvince || SPX_DEFAULT_SENDER.state,
         senderCity: params.pickWard || SPX_DEFAULT_SENDER.city,
-        senderDistrict: params.pickDistrict || SPX_DEFAULT_SENDER.district,
         senderDetailAddress: params.pickAddress || SPX_DEFAULT_SENDER.detailAddress,
         deliverState: params.receiverProvince || SPX_DEFAULT_RECEIVER.state,
         deliverCity: params.receiverWard || SPX_DEFAULT_RECEIVER.city,
-        deliverDistrict: params.receiverDistrict || SPX_DEFAULT_RECEIVER.district,
         deliverDetailAddress: params.receiverAddress || SPX_DEFAULT_RECEIVER.detailAddress,
       });
 
@@ -107,18 +103,17 @@ export function createSpxAdapter(): ShippingProviderAdapter {
           parcelItemName: spx.parcelItemName ?? "Hàng hóa",
           declaredValue: spx.declaredValue,
           codAmount: spx.codAmount ?? 0,
+          voucherCode: spx.voucherCode,
           orderId: params.orderId,
           senderName: params.pickName,
           senderPhone: params.pickTel,
           senderState: params.pickProvince || SPX_DEFAULT_SENDER.state,
           senderCity: params.pickWard || SPX_DEFAULT_SENDER.city,
-          senderDistrict: params.pickDistrict || SPX_DEFAULT_SENDER.district,
           senderDetailAddress: params.pickAddress || SPX_DEFAULT_SENDER.detailAddress,
           deliverName: params.receiverName,
           deliverPhone: params.receiverTel,
           deliverState: params.receiverProvince || SPX_DEFAULT_RECEIVER.state,
           deliverCity: params.receiverWard || SPX_DEFAULT_RECEIVER.city,
-          deliverDistrict: params.receiverDistrict || SPX_DEFAULT_RECEIVER.district,
           deliverDetailAddress: params.receiverAddress || SPX_DEFAULT_RECEIVER.detailAddress,
         });
       } catch (err) {
@@ -166,6 +161,7 @@ export function createSpxAdapter(): ShippingProviderAdapter {
       return {
         providerCode: "spx",
         trackingCode: result.trackingNo,
+        trackingLink: result.trackingLink ?? null,
         status: mapSpxStatus(result.statusCode),
         statusCode: String(result.statusCode),
         statusText: result.statusText,
@@ -197,12 +193,10 @@ export async function spxEstimateAdjustmentFee(shopId: string, params: {
   trackingNo: string;
   senderState: string;
   senderCity: string;
-  senderDistrict: string;
   senderPostCode: string;
   senderDetailAddress: string;
   deliverState: string;
   deliverCity: string;
-  deliverDistrict: string;
   deliverPostCode: string;
   deliverDetailAddress: string;
 }) {
@@ -225,6 +219,11 @@ export async function spxCheckCredentialsForShop(shopId: string) {
   return spxCheckCredentials({ environment: creds.environment, userId: creds.userId, userSecret: creds.userSecret });
 }
 
+export async function spxListVouchersForShop(shopId: string) {
+  const creds = await getSpxCredentials(shopId);
+  return spxListVouchers({ environment: creds.environment, userId: creds.userId, userSecret: creds.userSecret });
+}
+
 // Extended params passed from the SPX-specific route handler
 export type SpxShippingSubmitParams = ShippingSubmitParams & {
   spxServiceType?: 1 | 2;
@@ -238,4 +237,5 @@ export type SpxShippingSubmitParams = ShippingSubmitParams & {
   parcelItemName?: string;
   declaredValue?: number;
   codAmount?: number;
+  voucherCode?: string;
 };
