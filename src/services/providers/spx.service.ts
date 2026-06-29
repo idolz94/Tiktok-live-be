@@ -88,6 +88,14 @@ export async function spxCreateAccount(params: { phone: string; email?: string }
 
 
 
+export type SpxOrderItem = {
+  itemName: string;
+  itemWeightGram: number;
+  itemPrice: number;
+  itemQuantity: number;
+  itemPicture?: string;
+};
+
 export type SpxCreateOrderParams = {
   environment: string;
   userId: number;
@@ -119,6 +127,7 @@ export type SpxCreateOrderParams = {
   deliverCity: string;
   deliverDistrict: string;
   deliverDetailAddress: string;
+  itemList?: SpxOrderItem[];
 };
 
 export type SpxCreateOrderResult = {
@@ -171,6 +180,13 @@ export async function spxCreateOrder(params: SpxCreateOrderParams): Promise<SpxC
       parcel_item_name: params.parcelItemName,
       parcel_item_quantity: 1,
       express_insured_value: insuredValue,
+      item_list: params.itemList?.map((it) => ({
+        item_name: it.itemName,
+        item_weight: String(it.itemWeightGram),
+        item_price: String(it.itemPrice),
+        item_quantity: it.itemQuantity,
+        ...(it.itemPicture ? { item_picture: it.itemPicture } : {}),
+      })),
     },
   };
 
@@ -204,12 +220,15 @@ export type SpxTrackingResult = {
 };
 
 export async function spxGetTracking(params: { environment: string; userId: number; userSecret: string; trackingNo: string }): Promise<SpxTrackingResult> {
-  const body = { user_id: params.userId, user_secret: params.userSecret, tracking_no: params.trackingNo };
-  const data = await spxPost("/open/api/v1/order/get_tracking_info", params.environment, body) as Record<string, unknown>;
+  const body = { user_id: params.userId, user_secret: params.userSecret, tracking_no_list: [params.trackingNo] };
+  const data = await spxPost("/open/api/v1/order/batch_search_order", params.environment, body) as Record<string, unknown>;
+  const orders = data["orders"] as Array<Record<string, unknown>> | undefined;
+  const first = orders?.[0];
+  if (!first) throw new ApiError(404, "SPX không tìm thấy đơn hàng.", "SPX_TRACKING_NOT_FOUND");
   return {
-    trackingNo: String(data["tracking_no"] ?? params.trackingNo),
-    statusCode: Number(data["status_code"] ?? 0),
-    statusText: String(data["status_text"] ?? ""),
+    trackingNo: String(first["tracking_no"] ?? params.trackingNo),
+    statusCode: Number(first["status_code"] ?? 0),
+    statusText: String(first["status_text"] ?? ""),
   };
 }
 
@@ -219,7 +238,7 @@ export async function spxCancelOrder(params: { environment: string; userId: numb
     user_secret: params.userSecret,
     tracking_no_list: [params.trackingNo],
   };
-  await spxPost("/open/api/v1/order/cancel", params.environment, body);
+  await spxPost("/open/api/v1/order/batch_cancel_order", params.environment, body);
 }
 
 export type SpxLabelResult = { trackingNo: string; labelUrl: string };
@@ -230,14 +249,43 @@ export async function spxGetLabel(params: { environment: string; userId: number;
     user_secret: params.userSecret,
     tracking_no_list: [params.trackingNo],
   };
-  const data = await spxPost("/open/api/v1/order/get_airway_bill", params.environment, body) as Record<string, unknown>;
-  const list = data["airway_bill_list"] as Array<Record<string, unknown>>;
-  const first = list?.[0];
-  if (!first) throw new ApiError(502, "SPX không trả về URL nhãn.", "SPX_LABEL_EMPTY");
+  const data = await spxPost("/open/api/v1/order/batch_get_shipping_label", params.environment, body) as Record<string, unknown>;
+  const labelUrl = String(data["awb_link"] ?? "");
+  if (!labelUrl) throw new ApiError(502, "SPX không trả về URL nhãn.", "SPX_LABEL_EMPTY");
+  return { trackingNo: params.trackingNo, labelUrl };
+}
+
+export type SpxOrderFeeResult = {
+  trackingNo: string;
+  actualShippingFee: number;
+  actualWeight: number;
+  billableWeight: number;
+};
+
+export async function spxGetOrderFee(params: { environment: string; userId: number; userSecret: string; trackingNo: string }): Promise<SpxOrderFeeResult> {
+  const body = { user_id: params.userId, user_secret: params.userSecret, tracking_no_list: [params.trackingNo] };
+  const data = await spxPost("/open/api/v1/order/batch_get_asf", params.environment, body) as Record<string, unknown>;
+  const orders = data["orders"] as Array<Record<string, unknown>> | undefined;
+  const first = orders?.[0];
+  if (!first) {
+    const failList = data["fail_list"] as Array<Record<string, unknown>> | undefined;
+    const fail = failList?.[0];
+    throw new ApiError(422, String(fail?.["message"] ?? "SPX không trả về phí đơn hàng."), "SPX_ORDER_FEE_ERROR", { raw: fail });
+  }
+  const feeInfo = first["fee_info"] as Record<string, unknown> | undefined ?? {};
+  const parcelInfo = first["parcel_info"] as Record<string, unknown> | undefined ?? {};
   return {
     trackingNo: String(first["tracking_no"] ?? params.trackingNo),
-    labelUrl: String(first["airway_bill_url"] ?? ""),
+    actualShippingFee: Number(feeInfo["actual_shipping_fee"] ?? 0),
+    actualWeight: Number(parcelInfo["actual_weight"] ?? 0),
+    billableWeight: Number(parcelInfo["billable_weight"] ?? 0),
   };
+}
+
+export async function spxCheckCredentials(params: { environment: string; userId: number; userSecret: string }): Promise<void> {
+  // ponytail: reuse get_pickup_time as a lightweight credential check — no dedicated endpoint in the docs
+  const body = { user_id: params.userId, user_secret: params.userSecret, service_type: 1 };
+  await spxPost("/open/api/v1/order/get_pickup_time", params.environment, body);
 }
 
 export type SpxFeeResult = {

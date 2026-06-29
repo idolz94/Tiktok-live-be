@@ -18,8 +18,10 @@ import { getSpxCredentials } from "./credentials.js";
 import {
   spxBatchCheckFee,
   spxCancelOrder,
+  spxCheckCredentials,
   spxCreateOrder,
   spxEstimateAddressAdjustmentFee,
+  spxGetOrderFee,
   spxGetTracking,
 } from "./spx.service.js";
 import type {
@@ -211,6 +213,16 @@ export async function spxEstimateAdjustmentFee(shopId: string, params: {
     userSecret: creds.userSecret,
     ...params,
   });
+}
+
+export async function spxGetOrderFeeForShop(shopId: string, trackingNo: string) {
+  const creds = await getSpxCredentials(shopId);
+  return spxGetOrderFee({ environment: creds.environment, userId: creds.userId, userSecret: creds.userSecret, trackingNo });
+}
+
+export async function spxCheckCredentialsForShop(shopId: string) {
+  const creds = await getSpxCredentials(shopId);
+  return spxCheckCredentials({ environment: creds.environment, userId: creds.userId, userSecret: creds.userSecret });
 }
 
 // Extended params passed from the SPX-specific route handler
