@@ -1,9 +1,25 @@
 import { ApiError } from "../../lib/api-error.js";
+
+// ponytail: SPX city = xã (pickWard), district = huyện (pickDistrict), detailAddress = free-text (pickAddress)
+// SPX receives full names with prefixes ("Tỉnh Lạng Sơn", "Huyện Bắc Sơn", "Xã Bắc Sơn") as-is
+const SPX_DEFAULT_SENDER = {
+  state: "Tỉnh Lạng Sơn",
+  city: "Xã Bắc Sơn",
+  district: "Huyện Bắc Sơn",
+  detailAddress: "Khối Phố Minh Khai",
+};
+const SPX_DEFAULT_RECEIVER = {
+  state: "Tỉnh An Giang",
+  city: "Xã An Phú",
+  district: "Xã An Phú",
+  detailAddress: "Số nhà 37, Ấp An Hưng",
+};
 import { getSpxCredentials } from "./credentials.js";
 import {
+  spxBatchCheckFee,
   spxCancelOrder,
   spxCreateOrder,
-  spxGetFee,
+  spxEstimateAddressAdjustmentFee,
   spxGetTracking,
 } from "./spx.service.js";
 import type {
@@ -45,20 +61,21 @@ export function createSpxAdapter(): ShippingProviderAdapter {
     async getFee(params: ShippingFeeParams): Promise<ShippingFeeResult> {
       const creds = await getSpxCredentials(params.shopId);
 
-      // SPX VN: district→senderCity, ward→senderDistrict
-      const fee = await spxGetFee({
+      const fee = await spxBatchCheckFee({
         environment: creds.environment,
         userId: creds.userId,
         userSecret: creds.userSecret,
-        parcelWeightGram: (params as any).parcelWeightGram ?? 300,
-        codAmount: (params as any).codAmount ?? 0,
-        serviceType: (params as any).serviceType ?? 1,
-        senderState: params.pickProvince,
-        senderCity: params.pickDistrict,
-        senderDistrict: params.pickWard ?? "",
-        deliverState: params.receiverProvince,
-        deliverCity: params.receiverDistrict,
-        deliverDistrict: params.receiverWard ?? "",
+        orderId: params.orderId,
+        serviceType: 1,
+        parcelWeightKg: params.weight ? params.weight / 1000 : 0.3,
+        senderState: params.pickProvince || SPX_DEFAULT_SENDER.state,
+        senderCity: params.pickWard || SPX_DEFAULT_SENDER.city,
+        senderDistrict: params.pickDistrict || SPX_DEFAULT_SENDER.district,
+        senderDetailAddress: params.pickAddress || SPX_DEFAULT_SENDER.detailAddress,
+        deliverState: params.receiverProvince || SPX_DEFAULT_RECEIVER.state,
+        deliverCity: params.receiverWard || SPX_DEFAULT_RECEIVER.city,
+        deliverDistrict: params.receiverDistrict || SPX_DEFAULT_RECEIVER.district,
+        deliverDetailAddress: params.receiverAddress || SPX_DEFAULT_RECEIVER.detailAddress,
       });
 
       return { providerCode: "spx", fee: fee.fee };
@@ -77,7 +94,10 @@ export function createSpxAdapter(): ShippingProviderAdapter {
           userSecret: creds.userSecret,
           serviceType: spx.spxServiceType ?? 1,
           collectType: spx.spxCollectType ?? 1,
+          pickupTime: spx.spxPickupTime,
           pickupTimeRangeId: spx.spxPickupTimeRangeId,
+          paymentRole: 1,
+          highValueProcessingCollection: 0,
           parcelWeightGram: spx.parcelWeightGram ?? 300,
           parcelLengthCm: spx.parcelLengthCm,
           parcelWidthCm: spx.parcelWidthCm,
@@ -88,16 +108,16 @@ export function createSpxAdapter(): ShippingProviderAdapter {
           orderId: params.orderId,
           senderName: params.pickName,
           senderPhone: params.pickTel,
-          senderState: params.pickProvince,
-          senderCity: params.pickDistrict,           // SPX VN: district
-          senderDistrict: params.pickWard ?? "",     // SPX VN: ward
-          senderDetailAddress: params.pickAddress ?? "",
+          senderState: params.pickProvince || SPX_DEFAULT_SENDER.state,
+          senderCity: params.pickWard || SPX_DEFAULT_SENDER.city,
+          senderDistrict: params.pickDistrict || SPX_DEFAULT_SENDER.district,
+          senderDetailAddress: params.pickAddress || SPX_DEFAULT_SENDER.detailAddress,
           deliverName: params.receiverName,
           deliverPhone: params.receiverTel,
-          deliverState: params.receiverProvince,
-          deliverCity: params.receiverDistrict,      // SPX VN: district
-          deliverDistrict: params.receiverWard,      // SPX VN: ward
-          deliverDetailAddress: params.receiverAddress ?? "",
+          deliverState: params.receiverProvince || SPX_DEFAULT_RECEIVER.state,
+          deliverCity: params.receiverWard || SPX_DEFAULT_RECEIVER.city,
+          deliverDistrict: params.receiverDistrict || SPX_DEFAULT_RECEIVER.district,
+          deliverDetailAddress: params.receiverAddress || SPX_DEFAULT_RECEIVER.detailAddress,
         });
       } catch (err) {
         // Surface as outcome_unknown on network timeout so caller marks the row correctly
@@ -171,11 +191,34 @@ export function createSpxAdapter(): ShippingProviderAdapter {
   };
 }
 
+export async function spxEstimateAdjustmentFee(shopId: string, params: {
+  trackingNo: string;
+  senderState: string;
+  senderCity: string;
+  senderDistrict: string;
+  senderPostCode: string;
+  senderDetailAddress: string;
+  deliverState: string;
+  deliverCity: string;
+  deliverDistrict: string;
+  deliverPostCode: string;
+  deliverDetailAddress: string;
+}) {
+  const creds = await getSpxCredentials(shopId);
+  return spxEstimateAddressAdjustmentFee({
+    environment: creds.environment,
+    userId: creds.userId,
+    userSecret: creds.userSecret,
+    ...params,
+  });
+}
+
 // Extended params passed from the SPX-specific route handler
 export type SpxShippingSubmitParams = ShippingSubmitParams & {
   spxServiceType?: 1 | 2;
   spxCollectType?: 1 | 2;
   spxPickupTimeRangeId?: number;
+  spxPickupTime?: number;
   parcelWeightGram?: number;
   parcelLengthCm?: number;
   parcelWidthCm?: number;

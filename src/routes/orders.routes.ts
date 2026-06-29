@@ -8,7 +8,6 @@ import {
   addOrderItem,
   cancelShipment,
   createOrderFromComment,
-  createShipment,
   createSpxShipment,
   deleteOrder,
   getShippingFee,
@@ -51,7 +50,20 @@ const orderItemSchema = z.object({
   quantity: z.number().int().positive().default(1),
 });
 
-const shippingProviderCodeSchema = z.enum(["ghtk", "manual", "spx"]).default("ghtk");
+const shippingProviderCodeSchema = z.enum(["manual", "spx"]).default("manual");
+
+const feeSchema = z.object({
+  providerCode: z.literal("spx"),
+  pickProvince: z.string().min(1),
+  pickDistrict: z.string().min(1),
+  pickWard: z.string().min(1),
+  pickAddress: z.string().optional(),
+  receiverProvince: z.string().min(1),
+  receiverDistrict: z.string().min(1),
+  receiverWard: z.string().min(1),
+  receiverAddress: z.string().optional(),
+  weightGram: z.number().int().positive().optional(),
+});
 
 const submitSpxSchema = z.object({
   providerCode: z.literal("spx"),
@@ -59,6 +71,7 @@ const submitSpxSchema = z.object({
   serviceType: z.union([z.literal(1), z.literal(2)]).default(1),
   collectType: z.union([z.literal(1), z.literal(2)]).default(1),
   pickupTimeRangeId: z.number().int().positive().optional(),
+  pickupTime: z.number().int().positive().optional(),
   parcelWeightGram: z.number().int().positive(),
   parcelLengthCm: z.number().int().positive().optional(),
   parcelWidthCm: z.number().int().positive().optional(),
@@ -67,41 +80,6 @@ const submitSpxSchema = z.object({
   declaredValue: z.number().int().nonnegative().optional(),
   note: z.string().optional(),
   idempotencyKey: z.string().uuid(),
-});
-
-const feeShippingSchema = z.object({
-  providerCode: shippingProviderCodeSchema.optional(),
-  pickProvince: z.string().min(1),
-  pickDistrict: z.string().min(1),
-  pickWard: z.string().optional(),
-  pickAddress: z.string().optional(),
-  receiverProvince: z.string().min(1),
-  receiverDistrict: z.string().min(1),
-  receiverWard: z.string().optional(),
-  receiverAddress: z.string().optional(),
-  weight: z.number().nonnegative().optional(),
-  transport: z.enum(["road", "fly"]).optional(),
-});
-
-const submitGhtkSchema = z.object({
-  providerCode: shippingProviderCodeSchema.optional(),
-  pickName: z.string().min(1),
-  pickAddress: z.string().optional().default(""),
-  pickProvince: z.string().min(1),
-  pickDistrict: z.string().min(1),
-  pickWard: z.string().optional(),
-  pickTel: z.string().min(1),
-  receiverName: z.string().min(1),
-  receiverAddress: z.string().optional().default(""),
-  receiverProvince: z.string().min(1),
-  receiverDistrict: z.string().min(1),
-  receiverWard: z.string().min(1),
-  receiverHamlet: z.string().optional(),
-  receiverTel: z.string().min(1),
-  note: z.string().optional(),
-  isFreeShip: z.union([z.literal(0), z.literal(1)]).optional(),
-  transport: z.enum(["road", "fly"]).optional(),
-  pickOption: z.enum(["cod", "post"]).optional(),
 });
 
 const manualShippingSchema = z.object({
@@ -238,120 +216,6 @@ router.patch(
 );
 
 router.post(
-  "/:orderId/shipping/fee",
-  asyncHandler(async (request, response) => {
-    const context = await requireUsableAccountContext(request);
-    const body = feeShippingSchema.parse(request.body || {});
-
-    const result = await getShippingFee({
-      shopId: context.shop.id,
-      orderId: String(request.params.orderId),
-      providerCode: body.providerCode,
-      pickProvince: body.pickProvince,
-      pickDistrict: body.pickDistrict,
-      pickWard: body.pickWard,
-      pickAddress: body.pickAddress,
-      receiverProvince: body.receiverProvince,
-      receiverDistrict: body.receiverDistrict,
-      receiverWard: body.receiverWard,
-      receiverAddress: body.receiverAddress,
-      weight: body.weight,
-      transport: body.transport,
-    });
-
-    return ok(response, { fee: result });
-  }),
-);
-
-router.post(
-  "/:orderId/shipping",
-  asyncHandler(async (request, response) => {
-    const context = await requireUsableAccountContext(request);
-    const body = submitGhtkSchema.parse(request.body || {});
-    const providerCode = body.providerCode ?? "ghtk";
-
-    const result =
-      providerCode === "manual"
-        ? await submitManualShipping({
-            shopId: context.shop.id,
-            orderId: String(request.params.orderId),
-            paymentSide: body.isFreeShip === 1 ? 1 : 0,
-            shippingFee: body.isFreeShip === 1 ? 0 : undefined,
-            note: body.note,
-          })
-        : await createShipment({
-            shopId: context.shop.id,
-            orderId: String(request.params.orderId),
-            providerCode,
-            pickName: body.pickName,
-            pickAddress: body.pickAddress,
-            pickProvince: body.pickProvince,
-            pickDistrict: body.pickDistrict,
-            pickWard: body.pickWard,
-            pickTel: body.pickTel,
-            receiverName: body.receiverName,
-            receiverAddress: body.receiverAddress,
-            receiverProvince: body.receiverProvince,
-            receiverDistrict: body.receiverDistrict,
-            receiverWard: body.receiverWard,
-            receiverHamlet: body.receiverHamlet,
-            receiverTel: body.receiverTel,
-            note: body.note,
-            isFreeShip: body.isFreeShip,
-            transport: body.transport,
-            pickOption: body.pickOption,
-          });
-
-    return mutateOk(response, "Tạo vận đơn thành công.", { shipping: result });
-  }),
-);
-
-router.get(
-  "/:orderId/shipping/tracking",
-  asyncHandler(async (request, response) => {
-    const context = await requireUsableAccountContext(request);
-    const result = await getShippingTracking({
-      shopId: context.shop.id,
-      orderId: String(request.params.orderId),
-    });
-    return ok(response, { tracking: result });
-  }),
-);
-
-router.post(
-  "/:orderId/shipping/submit",
-  asyncHandler(async (request, response) => {
-    const context = await requireUsableAccountContext(request);
-    const body = submitGhtkSchema.parse(request.body || {});
-
-    const result = await createShipment({
-      shopId: context.shop.id,
-      orderId: String(request.params.orderId),
-      providerCode: body.providerCode ?? "ghtk",
-      pickName: body.pickName,
-      pickAddress: body.pickAddress,
-      pickProvince: body.pickProvince,
-      pickDistrict: body.pickDistrict,
-      pickWard: body.pickWard,
-      pickTel: body.pickTel,
-      receiverName: body.receiverName,
-      receiverAddress: body.receiverAddress,
-      receiverProvince: body.receiverProvince,
-      receiverDistrict: body.receiverDistrict,
-      receiverWard: body.receiverWard,
-      receiverHamlet: body.receiverHamlet,
-      receiverTel: body.receiverTel,
-      note: body.note,
-      isFreeShip: body.isFreeShip,
-      transport: body.transport,
-      pickOption: body.pickOption,
-    });
-
-    return mutateOk(response, "Đăng đơn GHTK thành công.", { shipping: result });
-  }),
-);
-
-router.post(
   "/:orderId/shipping/cancel",
   asyncHandler(async (request, response) => {
     const context = await requireUsableAccountContext(request);
@@ -364,6 +228,18 @@ router.post(
     });
 
     return mutateOk(response, "Hủy vận đơn thành công.", { shipping: result });
+  }),
+);
+
+router.get(
+  "/:orderId/shipping/tracking",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const result = await getShippingTracking({
+      shopId: context.shop.id,
+      orderId: String(request.params.orderId),
+    });
+    return ok(response, { tracking: result });
   }),
 );
 
@@ -420,6 +296,29 @@ router.patch(
 );
 
 router.post(
+  "/:orderId/shipping/fee",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const body = feeSchema.parse(request.body || {});
+    const result = await getShippingFee({
+      shopId: context.shop.id,
+      orderId: String(request.params.orderId),
+      providerCode: body.providerCode,
+      pickProvince: body.pickProvince,
+      pickDistrict: body.pickDistrict,
+      pickWard: body.pickWard,
+      pickAddress: body.pickAddress,
+      receiverProvince: body.receiverProvince,
+      receiverDistrict: body.receiverDistrict,
+      receiverWard: body.receiverWard,
+      receiverAddress: body.receiverAddress,
+      weight: body.weightGram,
+    });
+    return ok(response, { fee: result });
+  }),
+);
+
+router.post(
   "/:orderId/shipping/spx",
   asyncHandler(async (request, response) => {
     const context = await requireUsableAccountContext(request);
@@ -432,6 +331,7 @@ router.post(
       serviceType: body.serviceType,
       collectType: body.collectType,
       pickupTimeRangeId: body.pickupTimeRangeId,
+      pickupTime: body.pickupTime,
       parcelWeightGram: body.parcelWeightGram,
       parcelLengthCm: body.parcelLengthCm,
       parcelWidthCm: body.parcelWidthCm,

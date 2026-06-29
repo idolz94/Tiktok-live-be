@@ -1,4 +1,4 @@
-export type ShippingProviderCode = "ghtk" | "manual" | "spx";
+export type ShippingProviderCode = "manual" | "spx";
 
 export type ShippingFeeResult = {
   providerCode: ShippingProviderCode;
@@ -65,11 +65,11 @@ export type ShippingFeeParams = {
   shopId: string;
   orderId: string;
   pickProvince: string;
-  pickDistrict: string;
+  pickDistrict?: string;
   pickWard?: string;
   pickAddress?: string;
   receiverProvince: string;
-  receiverDistrict: string;
+  receiverDistrict?: string;
   receiverWard?: string;
   receiverAddress?: string;
   weight?: number;
@@ -82,13 +82,13 @@ export type ShippingSubmitParams = {
   pickName: string;
   pickAddress: string;
   pickProvince: string;
-  pickDistrict: string;
+  pickDistrict?: string;
   pickWard?: string;
   pickTel: string;
   receiverName: string;
   receiverAddress: string;
   receiverProvince: string;
-  receiverDistrict: string;
+  receiverDistrict?: string;
   receiverWard: string;
   receiverHamlet?: string;
   receiverTel: string;

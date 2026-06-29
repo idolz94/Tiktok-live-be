@@ -1,9 +1,13 @@
+import { createHmac } from "crypto";
 import { ApiError } from "../../lib/api-error.js";
 import { env } from "../../config/env.js";
 import { getSpxErrorMessage } from "./spx.errors.js";
 
+function toE164VN(phone: string): string {
+  return phone.startsWith("0") ? "84" + phone.slice(1) : phone;
+}
 type SpxResponse = {
-  errcode: number;
+  ret_code: number;
   message?: string;
   error_type?: string;
   error_code?: number;
@@ -17,30 +21,29 @@ function spxBase(environment: string): string {
   return env.spxApiBase || "https://test-stable.spx.vn";
 }
 
-function buildHeaders(): Record<string, string> {
-  const appId = env.spxAppId;
-  const appSecret = env.spxAppSecret;
-  if (!appId || !appSecret) throw new ApiError(500, "SPX app credentials chưa được cấu hình.", "SPX_APP_CREDS_MISSING");
-  const timestamp = Math.floor(Date.now() / 1000);
-  const randomNum = Math.floor(Math.random() * 1_000_000);
-  return {
-    "app-id": appId,
-    "check-sign": appSecret,
-    "timestamp": String(timestamp),
-    "random-num": String(randomNum),
-  };
-}
-
 function throwSpxError(res: SpxResponse): never {
-  const code = res.error_code ?? res.errcode;
+  const code = res.error_code ?? res.ret_code;
   const raw = res.error_msg || res.message || "";
   const msg = getSpxErrorMessage(typeof code === "number" ? code : undefined, raw);
   throw new ApiError(422, msg, "SPX_ERROR", { errorCode: code, raw });
 }
 
 async function spxPost(path: string, environment: string, body: unknown): Promise<unknown> {
+  const appId = env.spxAppId;
+  const appSecret = env.spxAppSecret;
+  if (!appId || !appSecret) throw new ApiError(500, "SPX app credentials chưa được cấu hình.", "SPX_APP_CREDS_MISSING");
   const payload = JSON.stringify(body);
-  const spxHeaders = buildHeaders();
+  const timestamp = Math.floor(Date.now() / 1000);
+  const randomNum = Math.floor(Math.random() * 1_000_000);
+  const checkSign = createHmac("sha256", appSecret)
+    .update(`${appId}_${timestamp}_${randomNum}_${payload}`)
+    .digest("hex");
+  const spxHeaders = {
+    "app-id": appId,
+    "check-sign": checkSign,
+    "timestamp": String(timestamp),
+    "random-num": String(randomNum),
+  };
 
   let res: Response;
   try {
@@ -63,13 +66,15 @@ async function spxPost(path: string, environment: string, body: unknown): Promis
     throw new ApiError(502, "Không đọc được phản hồi từ SPX.", "SPX_PARSE_ERROR");
   }
 
-  const curlHeaders = Object.entries({ "Content-Type": "application/json", ...spxHeaders })
-    .map(([k, v]) => `-H '${k}: ${v}'`)
-    .join(" \\\n  ");
-  console.log(`[SPX curl] curl -X POST '${spxBase(environment)}${path}' \\\n  ${curlHeaders} \\\n  -d '${payload}'`);
-  console.log("[SPX response]", JSON.stringify(data));
+  if (!path.includes("get_pickup_time")) {
+    const curlHeaders = Object.entries({ "Content-Type": "application/json", ...spxHeaders })
+      .map(([k, v]) => `-H '${k}: ${v}'`)
+      .join(" \\\n  ");
+    console.log(`[SPX curl] curl -X POST '${spxBase(environment)}${path}' \\\n  ${curlHeaders} \\\n  -d '${payload}'`);
+    console.log("[SPX response]", JSON.stringify(data));
+  }
 
-  if (data.errcode !== 0) throwSpxError(data);
+  if (data.ret_code !== 0) throwSpxError(data);
   return data.data;
 }
 
@@ -89,7 +94,11 @@ export type SpxCreateOrderParams = {
   userSecret: string;
   serviceType: 1 | 2;
   collectType: 1 | 2;
+  pickupTime?: number;
   pickupTimeRangeId?: number;
+  pickupTimeRange?: string;
+  paymentRole: 1 | 2;
+  highValueProcessingCollection: 0 | 1;
   parcelWeightGram: number;
   parcelLengthCm?: number;
   parcelWidthCm?: number;
@@ -119,45 +128,67 @@ export type SpxCreateOrderResult = {
 };
 
 export async function spxCreateOrder(params: SpxCreateOrderParams): Promise<SpxCreateOrderResult> {
-  const orderList: Record<string, unknown> = {
-    order_id: params.orderId,
-    sender_real_name: params.senderName,
-    sender_phone_number: params.senderPhone,
-    sender_state: params.senderState,
-    sender_city: params.senderCity,
-    sender_district: params.senderDistrict,
-    sender_detail_address: params.senderDetailAddress,
-    deliver_real_name: params.deliverName,
-    deliver_phone_number: params.deliverPhone,
-    deliver_state: params.deliverState,
-    deliver_city: params.deliverCity,
-    deliver_district: params.deliverDistrict,
-    deliver_detail_address: params.deliverDetailAddress,
-    parcel_weight: params.parcelWeightGram,
-    parcel_length: params.parcelLengthCm ?? 0,
-    parcel_width: params.parcelWidthCm ?? 0,
-    parcel_height: params.parcelHeightCm ?? 0,
-    parcel_item_name: params.parcelItemName,
-    declared_value: params.declaredValue ?? 0,
-    cod: params.codAmount,
-    service_type: params.serviceType,
-    collect_type: params.collectType,
-  };
+  const isCod = params.codAmount > 0;
+  const insuredValue = params.declaredValue ?? 0;
+  // VN: high_value_processing_collection must be 1 when express_insured_value >= 3_000_000
+  const highValue = insuredValue >= 3_000_000 ? 1 : params.highValueProcessingCollection;
 
-  if (params.collectType === 1 && params.pickupTimeRangeId) {
-    orderList["pickup_time_id"] = params.pickupTimeRangeId;
-  }
+  const order: Record<string, unknown> = {
+    order_id: params.orderId,
+    sender_info: {
+      sender_name: params.senderName,
+      sender_phone: toE164VN(params.senderPhone),
+      sender_state: params.senderState,
+      sender_city: params.senderCity,
+      sender_district: params.senderDistrict,
+      sender_detail_address: params.senderDetailAddress,
+    },
+    deliver_info: {
+      deliver_name: params.deliverName,
+      deliver_phone: toE164VN(params.deliverPhone),
+      deliver_state: params.deliverState,
+      deliver_city: params.deliverCity,
+      deliver_district: params.deliverDistrict,
+      deliver_detail_address: params.deliverDetailAddress,
+    },
+    base_info: {
+      service_type: params.serviceType,
+    },
+    fulfillment_info: {
+      collect_type: params.collectType,
+      payment_role: params.paymentRole,
+      high_value_processing_collection: highValue,
+      cod_collection: isCod ? 1 : 0,
+      cod_amount: isCod ? params.codAmount : 0,
+      ...(params.collectType === 1 && params.pickupTime ? { pickup_time: params.pickupTime } : {}),
+      ...(params.collectType === 1 && params.pickupTimeRangeId ? { pickup_time_range_id: params.pickupTimeRangeId } : {}),
+    },
+    parcel_info: {
+      parcel_weight: params.parcelWeightGram / 1000,
+      parcel_length: params.parcelLengthCm ?? 0,
+      parcel_width: params.parcelWidthCm ?? 0,
+      parcel_height: params.parcelHeightCm ?? 0,
+      parcel_item_name: params.parcelItemName,
+      parcel_item_quantity: 1,
+      express_insured_value: insuredValue,
+    },
+  };
 
   const body = {
     user_id: params.userId,
     user_secret: params.userSecret,
-    order_list: [orderList],
+    orders: [order],
   };
 
   const data = await spxPost("/open/api/v1/order/batch_create_order", params.environment, body) as Record<string, unknown>;
-  const orders = data["order_list"] as Array<Record<string, unknown>>;
+  const orders = data["orders"] as Array<Record<string, unknown>>;
   const first = orders?.[0];
-  if (!first) throw new ApiError(502, "SPX không trả về kết quả tạo đơn.", "SPX_EMPTY_RESULT");
+  if (!first) {
+    const failList = data["fail_list"] as Array<Record<string, unknown>> | undefined;
+    const fail = failList?.[0];
+    const reason = fail ? `${fail["message"] ?? fail["debug_msg"] ?? "Unknown"} (code: ${fail["ret_code"] ?? "?"})` : "SPX không trả về kết quả tạo đơn.";
+    throw new ApiError(422, String(reason), "SPX_CREATE_FAILED", { fail });
+  }
 
   return {
     trackingNo: String(first["tracking_no"] ?? ""),
@@ -209,37 +240,141 @@ export async function spxGetLabel(params: { environment: string; userId: number;
   };
 }
 
-export type SpxFeeResult = { fee: number };
+export type SpxFeeResult = {
+  fee: number;
+  basicFee: number;
+  codServiceFee: number;
+};
 
-export async function spxGetFee(params: {
+export async function spxBatchCheckFee(params: {
   environment: string;
   userId: number;
   userSecret: string;
-  parcelWeightGram: number;
-  codAmount: number;
+  orderId: string;
   serviceType: 1 | 2;
+  parcelWeightKg: number;
+  parcelLengthCm?: number;
+  parcelWidthCm?: number;
+  parcelHeightCm?: number;
+  codAmount?: number;
   senderState: string;
   senderCity: string;
   senderDistrict: string;
+  senderDetailAddress?: string;
   deliverState: string;
   deliverCity: string;
   deliverDistrict: string;
+  deliverDetailAddress?: string;
 }): Promise<SpxFeeResult> {
   const body = {
     user_id: params.userId,
     user_secret: params.userSecret,
+    orders: [
+      {
+        base_info: { service_type: params.serviceType },
+        sender_info: {
+          sender_state: params.senderState,
+          sender_city: params.senderCity,
+          sender_district: params.senderDistrict,
+          sender_detail_address: params.senderDetailAddress ?? "",
+        },
+        fulfillment_info: {
+          cod_collection: params.codAmount ? 1 : 0,
+          ...(params.codAmount ? { cod_amount: params.codAmount } : {}),
+        },
+        deliver_info: {
+          deliver_state: params.deliverState,
+          deliver_city: params.deliverCity,
+          deliver_district: params.deliverDistrict,
+          deliver_detail_address: params.deliverDetailAddress ?? "",
+        },
+        parcel_info: {
+          parcel_weight: params.parcelWeightKg,
+          parcel_item_name: "Hàng hóa",
+          parcel_item_quantity: 1,
+          ...(params.parcelLengthCm ? { parcel_length: params.parcelLengthCm } : {}),
+          ...(params.parcelWidthCm ? { parcel_width: params.parcelWidthCm } : {}),
+          ...(params.parcelHeightCm ? { parcel_height: params.parcelHeightCm } : {}),
+        },
+      },
+    ],
+  };
+
+  const data = await spxPost("/open/api/v1/order/batch_check_order", params.environment, body) as Record<string, unknown>;
+  const orders = data["orders"] as Array<Record<string, unknown>> | undefined;
+  const first = orders?.[0];
+  if (!first) {
+    const failList = data["fail_list"] as Array<Record<string, unknown>> | undefined;
+    const fail = failList?.[0];
+    throw new ApiError(422, String(fail?.["message"] ?? "SPX không trả về kết quả tính phí."), "SPX_FEE_ERROR", { errorCode: fail?.["ret_code"], raw: fail });
+  }
+  return {
+    fee: Number(first["estimated_shipping_fee"] ?? 0),
+    basicFee: Number(first["basic_shipping_fee"] ?? 0),
+    codServiceFee: Number(first["cod_service_fee"] ?? 0),
+  };
+}
+
+export type SpxEstimateAddressAdjustmentFeeParams = {
+  environment: string;
+  userId: number;
+  userSecret: string;
+  trackingNo: string;
+  senderState: string;
+  senderCity: string;
+  senderDistrict: string;
+  senderPostCode: string;
+  senderDetailAddress: string;
+  senderLongitude?: string;
+  senderLatitude?: string;
+  deliverState: string;
+  deliverCity: string;
+  deliverDistrict: string;
+  deliverPostCode: string;
+  deliverDetailAddress: string;
+  deliverLongitude?: string;
+  deliverLatitude?: string;
+};
+
+export type SpxEstimateAddressAdjustmentFeeResult = {
+  estimatedShippingFee: number;
+  basicShippingFee: number;
+  addressAdjustmentFee: number;
+  codServiceFee: number;
+};
+
+export async function spxEstimateAddressAdjustmentFee(
+  params: SpxEstimateAddressAdjustmentFeeParams,
+): Promise<SpxEstimateAddressAdjustmentFeeResult> {
+  const body = {
+    user_id: params.userId,
+    user_secret: params.userSecret,
+    tracking_no: params.trackingNo,
     sender_state: params.senderState,
     sender_city: params.senderCity,
     sender_district: params.senderDistrict,
+    sender_post_code: params.senderPostCode,
+    sender_detail_address: params.senderDetailAddress,
+    ...(params.senderLongitude && { sender_longitude: params.senderLongitude }),
+    ...(params.senderLatitude && { sender_latitude: params.senderLatitude }),
     deliver_state: params.deliverState,
     deliver_city: params.deliverCity,
     deliver_district: params.deliverDistrict,
-    parcel_weight: params.parcelWeightGram,
-    cod: params.codAmount,
-    service_type: params.serviceType,
+    deliver_post_code: params.deliverPostCode,
+    deliver_detail_address: params.deliverDetailAddress,
+    ...(params.deliverLongitude && { deliver_longitude: params.deliverLongitude }),
+    ...(params.deliverLatitude && { deliver_latitude: params.deliverLatitude }),
+    sender_address_version: 2,
+    deliver_address_version: 2,
   };
-  const data = await spxPost("/open/api/v1/order/get_shipping_fee", params.environment, body) as Record<string, unknown>;
-  return { fee: Number(data["estimated_shipping_fee"] ?? 0) };
+
+  const data = await spxPost("/open/api/v1/order/estimate_address_adjustment_fee", params.environment, body) as Record<string, unknown>;
+  return {
+    estimatedShippingFee: Number(data["estimated_shipping_fee"] ?? 0),
+    basicShippingFee: Number(data["basic_shipping_fee"] ?? 0),
+    addressAdjustmentFee: Number(data["address_adjustment_fee"] ?? 0),
+    codServiceFee: Number(data["cod_service_fee"] ?? 0),
+  };
 }
 
 export type SpxTimeslot = {

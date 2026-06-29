@@ -521,11 +521,11 @@ export type GetShippingFeeParams = {
   orderId: string;
   providerCode?: string;
   pickProvince: string;
-  pickDistrict: string;
+  pickDistrict?: string;
   pickWard?: string;
   pickAddress?: string;
   receiverProvince: string;
-  receiverDistrict: string;
+  receiverDistrict?: string;
   receiverWard?: string;
   receiverAddress?: string;
   weight?: number;
@@ -533,7 +533,7 @@ export type GetShippingFeeParams = {
 };
 export async function getShippingFee(params: GetShippingFeeParams) {
   await assertOrderInShop(params.orderId, params.shopId);
-  const provider = getShippingProviderAdapter(params.providerCode ?? "ghtk");
+  const provider = getShippingProviderAdapter(params.providerCode);
 
   return provider.getFee({
     shopId: params.shopId,
@@ -548,6 +548,40 @@ export async function getShippingFee(params: GetShippingFeeParams) {
     receiverAddress: params.receiverAddress,
     weight: params.weight,
     transport: params.transport,
+  });
+}
+
+export type EstimateAddressAdjustmentFeeParams = {
+  orderId: string;
+  shopId: string;
+  trackingNo: string;
+  senderState: string;
+  senderCity: string;
+  senderDistrict: string;
+  senderPostCode: string;
+  senderDetailAddress: string;
+  deliverState: string;
+  deliverCity: string;
+  deliverDistrict: string;
+  deliverPostCode: string;
+  deliverDetailAddress: string;
+};
+
+export async function estimateAddressAdjustmentFee(params: EstimateAddressAdjustmentFeeParams) {
+  await assertOrderInShop(params.orderId, params.shopId);
+  const { spxEstimateAdjustmentFee } = await import("./providers/spx.adapter.js");
+  return spxEstimateAdjustmentFee(params.shopId, {
+    trackingNo: params.trackingNo,
+    senderState: params.senderState,
+    senderCity: params.senderCity,
+    senderDistrict: params.senderDistrict,
+    senderPostCode: params.senderPostCode,
+    senderDetailAddress: params.senderDetailAddress,
+    deliverState: params.deliverState,
+    deliverCity: params.deliverCity,
+    deliverDistrict: params.deliverDistrict,
+    deliverPostCode: params.deliverPostCode,
+    deliverDetailAddress: params.deliverDetailAddress,
   });
 }
 
@@ -620,6 +654,7 @@ async function insertShipmentAndUpdateOrder({
   result,
   note,
   extra,
+  targetOrderStatus,
 }: {
   orderId: string;
   shopId: string;
@@ -627,14 +662,17 @@ async function insertShipmentAndUpdateOrder({
   result: Awaited<ReturnType<ReturnType<typeof getShippingProviderAdapter>["submit"]>>;
   note?: string;
   extra?: InsertShipmentExtra;
+  targetOrderStatus?: string;
 }) {
+  const orderStatus = targetOrderStatus ?? "packed";
   const patch: Record<string, unknown> = {
     providerCode: result.providerCode,
     shippingFee: result.fee ?? undefined,
     shippingStatus: result.status ?? "submitted",
-    status: "packed",
+    status: orderStatus,
     updatedAt: new Date(),
   };
+  if (orderStatus === "confirmed") patch.confirmedAt = new Date();
   if (result.labelPaperSize !== undefined) patch["labelPaperSize"] = result.labelPaperSize;
   if (note !== undefined) patch["note"] = note;
 
@@ -702,7 +740,7 @@ export async function createShipment(params: SubmitShippingParams) {
     throw badRequest("Đơn hàng đã có vận đơn. Hủy vận đơn cũ trước khi tạo mới.");
   }
 
-  const provider = getShippingProviderAdapter(params.providerCode ?? "ghtk");
+  const provider = getShippingProviderAdapter(params.providerCode);
   const result = await provider.submit(params);
   await insertShipmentAndUpdateOrder({
     orderId: params.orderId,
@@ -710,13 +748,10 @@ export async function createShipment(params: SubmitShippingParams) {
     providerCode: result.providerCode,
     result,
     note: params.note,
+    targetOrderStatus: "confirmed",
   });
 
   return { ...result, orderId: params.orderId };
-}
-
-export async function submitOrderToGhtk(params: SubmitShippingParams) {
-  return createShipment({ ...params, providerCode: "ghtk" });
 }
 
 export type CreateSpxShipmentParams = {
@@ -726,6 +761,7 @@ export type CreateSpxShipmentParams = {
   serviceType: 1 | 2;
   collectType: 1 | 2;
   pickupTimeRangeId?: number;
+  pickupTime?: number;
   parcelWeightGram: number;
   parcelLengthCm?: number;
   parcelWidthCm?: number;
@@ -794,13 +830,14 @@ export async function createSpxShipment(params: CreateSpxShipmentParams) {
     spxServiceType: params.serviceType,
     spxCollectType: params.collectType,
     spxPickupTimeRangeId: params.pickupTimeRangeId,
+    spxPickupTime: params.pickupTime,
     parcelWeightGram: params.parcelWeightGram,
     parcelLengthCm: params.parcelLengthCm,
     parcelWidthCm: params.parcelWidthCm,
     parcelHeightCm: params.parcelHeightCm,
     parcelItemName: params.parcelItemName,
     declaredValue: params.declaredValue,
-    codAmount: order.codAmount ?? 0,
+    codAmount: order.subtotalAmount ?? order.codAmount ?? 0,
     note: params.note,
   };
 
@@ -815,6 +852,7 @@ export async function createSpxShipment(params: CreateSpxShipmentParams) {
     providerCode: "spx",
     result,
     note: params.note,
+    targetOrderStatus: result.status !== "outcome_unknown" ? "confirmed" : undefined,
     extra: {
       spxTrackingNo: spxResult.spxTrackingNo,
       serviceType: params.serviceType,

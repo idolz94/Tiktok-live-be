@@ -46,11 +46,6 @@ export const env = {
   // Mobile app key
   mobileAppKey: readEnv("MOBILE_APP_KEY", "LUMI_APP_REACT_KEY"),
 
-  // GHTK shipping
-  ghtkApiBase: readEnv("OPEN_API_GHTK", "https://services-staging.ghtklab.com"),
-  ghtkApiToken: readEnv("API_TOKEN_GHTK"),
-  ghtkPartnerCode: readEnv("GHTK_PARTNER_CODE"),
-
   // SPX shipping
   spxAppId: readEnv("SPX_APP_ID"),
   spxAppSecret: readEnv("SPX_APP_SECRET"),
