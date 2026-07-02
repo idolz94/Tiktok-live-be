@@ -8,6 +8,7 @@ import { mutateOk, ok } from "../lib/response.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { bootstrapAccountContext, requireShopId } from "../services/account.service.js";
 import {
+  enrichTikTokChannelProfiles,
   listTikTokChannels,
   updateTikTokChannel,
 } from "../services/tiktok-channels.service.js";
@@ -29,6 +30,7 @@ router.get(
     const tiktokChannels = context.shop?.id
       ? await listTikTokChannels(context.shop.id)
       : [];
+    if (context.shop?.id) void enrichTikTokChannelProfiles(context.shop.id);
 
     let hasOrders = false;
     let hasHistory = false;

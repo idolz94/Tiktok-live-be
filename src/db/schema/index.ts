@@ -131,6 +131,8 @@ export const tiktokChannels = pgTable("shop_tiktok_channels", {
   shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
   tiktokUsername: text("tiktok_username").notNull(),
   displayName: text("display_name"),
+  avatarUrl: text("avatar_url"),
+  followerCount: integer("follower_count"),
   isDefault: boolean("is_default").default(false),
   status: text("status").default("active"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

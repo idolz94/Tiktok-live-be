@@ -3,6 +3,7 @@ import { db } from "../lib/db.js";
 import { tiktokChannels, shops } from "../db/schema/index.js";
 import { badRequest, notFound } from "../lib/api-error.js";
 import { normalizeAtUsername } from "../utils/tiktok.js";
+import { TikTokLiveConnection } from "tiktok-live-connector";
 
 export async function listTikTokChannels(shopId: string) {
   return db
@@ -129,4 +130,33 @@ async function updateShopDefaultTikTokUsername(shopId: string, tiktokUsername: s
     .update(shops)
     .set({ defaultTikTokUsername: tiktokUsername, updatedAt: new Date() })
     .where(eq(shops.id, shopId));
+}
+
+export async function enrichTikTokChannelProfiles(shopId: string): Promise<void> {
+  const channels = await listTikTokChannels(shopId);
+  await Promise.allSettled(
+    channels.map(async (channel) => {
+      try {
+        const conn = new TikTokLiveConnection(channel.tiktokUsername);
+        const info: any = await conn.fetchRoomInfo();
+        const owner = info?.data?.owner;
+        if (!owner) return;
+        const displayName: string | null = owner.nickname ?? null;
+        const avatarUrl: string | null =
+          owner.avatarThumb?.urlList?.[0] ?? owner.avatarThumb?.url ?? null;
+        const followerCount: number | null =
+          typeof owner.followInfo?.followerCount === "string"
+            ? parseInt(owner.followInfo.followerCount, 10) || null
+            : typeof owner.followInfo?.followerCount === "number"
+            ? owner.followInfo.followerCount
+            : null;
+        await db
+          .update(tiktokChannels)
+          .set({ displayName, avatarUrl, followerCount, updatedAt: new Date() })
+          .where(and(eq(tiktokChannels.id, channel.id), eq(tiktokChannels.shopId, shopId)));
+      } catch {
+        // non-blocking — skip channels that fail
+      }
+    }),
+  );
 }
