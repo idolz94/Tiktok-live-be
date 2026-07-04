@@ -124,7 +124,9 @@ router.get(
     const context = await requireUsableAccountContext(request);
     const shippingStatus = typeof request.query.shippingStatus === "string" ? request.query.shippingStatus : undefined;
     const status = typeof request.query.status === "string" ? statusSchema.shape.status.parse(request.query.status) : undefined;
-    const orders = await listOrders(context.shop.id, shippingStatus, status);
+    const limit = request.query.limit ? Math.min(Number(request.query.limit), 200) : 100;
+    const offset = request.query.offset ? Number(request.query.offset) : 0;
+    const orders = await listOrders(context.shop.id, shippingStatus, status, limit, offset);
     return ok(response, { orders });
   }),
 );

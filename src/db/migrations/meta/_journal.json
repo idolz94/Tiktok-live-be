@@ -15,6 +15,13 @@
       "when": 1781396651262,
       "tag": "0001_powerful_skullbuster",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783135060877,
+      "tag": "0002_lowly_steel_serpent",
+      "breakpoints": true
     }
   ]
 }

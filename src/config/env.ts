@@ -36,15 +36,20 @@ export const env = {
   facebookCallbackUrl: readEnv("FACEBOOK_CALLBACK_URL", "http://localhost:3001/api/auth/oauth/facebook/callback"),
 
   trialDays: readNumberEnv("TRIAL_DAYS", 3),
-  defaultPlanCode: readEnv("DEFAULT_PLAN_CODE", "trial"),
 
-  nodeInternalApiKey: readEnv("NODE_INTERNAL_API_KEY", "change_me"),
+  nodeInternalApiKey: readEnv("NODE_INTERNAL_API_KEY"),
 
   // Admin user id (UUID) — được phép gọi admin-activate
   adminUserId: readEnv("ADMIN_USER_ID", ""),
 
   // Mobile app key
   mobileAppKey: readEnv("MOBILE_APP_KEY", "LUMI_APP_REACT_KEY"),
+
+  // Redis
+  redisUrl: readEnv("REDIS_URL"),
+
+  // Payment
+  paymentReturnUrl: readEnv("PAYMENT_RETURN_URL"),
 
   // SPX shipping
   spxAppId: readEnv("SPX_APP_ID"),
@@ -59,6 +64,7 @@ export function assertRequiredEnv() {
     ["DATABASE_URL", env.databaseUrl],
     ["JWT_SECRET", env.jwtSecret],
     ["JWT_REFRESH_SECRET", env.jwtRefreshSecret],
+    ["NODE_INTERNAL_API_KEY", env.nodeInternalApiKey],
   ].filter(([, value]) => !value);
 
   if (missing.length > 0) {

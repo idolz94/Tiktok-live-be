@@ -2,6 +2,7 @@ import { createHmac } from "crypto";
 import { ApiError } from "../../lib/api-error.js";
 import { env } from "../../config/env.js";
 import { getSpxErrorMessage } from "./spx.errors.js";
+import logger from "../../lib/logger.js";
 
 function toE164VN(phone: string): string {
   return phone.startsWith("0") ? "84" + phone.slice(1) : phone;
@@ -67,11 +68,8 @@ async function spxPost(path: string, environment: string, body: unknown): Promis
   }
 
   if (!path.includes("get_pickup_time")) {
-    const curlHeaders = Object.entries({ "Content-Type": "application/json", ...spxHeaders })
-      .map(([k, v]) => `-H '${k}: ${v}'`)
-      .join(" \\\n  ");
-    console.log(`[SPX curl] curl -X POST '${spxBase(environment)}${path}' \\\n  ${curlHeaders} \\\n  -d '${payload}'`);
-    console.log("[SPX response]", JSON.stringify(data));
+    logger.debug({ path, payload }, "[SPX curl]");
+    logger.debug({ response: data }, "[SPX response]");
   }
 
   if (data.ret_code !== 0) throwSpxError(data);

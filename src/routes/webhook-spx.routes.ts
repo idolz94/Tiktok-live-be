@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "../lib/db.js";
 import { orderShipments, orders } from "../db/schema/index.js";
+import logger from "../lib/logger.js";
 import { broadcastSseToShop } from "../lib/sse-hub.js";
 import { env } from "../config/env.js";
 import { mapSpxStatus } from "../services/providers/spx.adapter.js";
@@ -88,7 +89,7 @@ router.post("/", async (req, res) => {
 
     res.status(200).json({ ok: true });
   } catch (err) {
-    console.error("[webhook-spx] error:", err);
+    logger.error({ err }, "[webhook-spx] error");
     res.status(200).json({ ok: false, message: "Internal error" });
   }
 });

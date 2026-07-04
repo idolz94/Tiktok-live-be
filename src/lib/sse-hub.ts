@@ -1,4 +1,5 @@
 import type { Response } from "express";
+import logger from "./logger.js";
 
 export type SseEventName =
   | "CONNECTED"
@@ -34,7 +35,7 @@ function writeEvent(response: Response, event: string, data: unknown) {
 export function addSseClient(client: SseClient) {
   const existing = clients.get(client.id);
   if (existing) {
-    console.log(`[SSE] replacing existing connection clientId=${client.id}`);
+    logger.debug({ clientId: client.id }, "[SSE] replacing existing connection");
     try {
       existing.response.end();
     } catch {
@@ -80,7 +81,7 @@ export function broadcastSseToShop(shopId: string, event: SseEventName, data: un
     }
   }
 
-  console.log(`[SSE] broadcast ${event} to shopId=${shopId} → ${sent} client(s)`);
+  logger.debug({ shopId, event, sent }, "[SSE] broadcast");
   return sent;
 }
 

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { asyncHandler } from "../lib/async-handler.js";
 import { ok } from "../lib/response.js";
 import { requireInternalApiKey } from "../middlewares/internal-api-key.js";
-import { activateLicenseFromPayment, getCurrentLicense } from "../services/license.service.js";
+import { activateLicenseFromPayment, getCurrentLicense, changeLicenseTier } from "../services/license.service.js";
 import { seedLicensePlans } from "../db/seed-license-plans.js";
 
 const router = Router();
@@ -46,6 +46,20 @@ router.post(
   asyncHandler(async (_request, response) => {
     await seedLicensePlans();
     return ok(response, { seeded: true });
+  }),
+);
+
+const tierSchema = z.object({
+  planCode: z.enum(["trial", "basic", "pro", "vip"]),
+});
+
+router.patch(
+  "/licenses/:shopId/tier",
+  asyncHandler(async (request, response) => {
+    const shopId = String(request.params.shopId);
+    const body = tierSchema.parse(request.body || {});
+    const license = await changeLicenseTier({ shopId, planCode: body.planCode });
+    return ok(response, { license });
   }),
 );
 

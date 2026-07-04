@@ -1,6 +1,6 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, or, lte } from "drizzle-orm";
 import { db } from "../lib/db.js";
-import { shops, shopLicenses, licensePlans } from "../db/schema/index.js";
+import { shops, shopLicenses, licensePlans, users, shopMembers } from "../db/schema/index.js";
 import { env } from "../config/env.js";
 import { addDays } from "../utils/date.js";
 import { seedLicensePlans } from "../db/seed-license-plans.js";
@@ -139,4 +139,71 @@ export async function activateLicenseFromPayment({
     .where(eq(shops.id, shopId));
 
   return license;
+}
+
+export async function findShopByUsername(input: string): Promise<{ shopId: string; shopName: string; userId: string } | null> {
+  const userRows = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(or(eq(users.username, input), eq(users.email, input), eq(users.phone, input)))
+    .limit(1);
+
+  if (!userRows[0]) return null;
+
+  const memberRows = await db
+    .select({ shopId: shopMembers.shopId })
+    .from(shopMembers)
+    .where(and(eq(shopMembers.userId, userRows[0].id), eq(shopMembers.status, "active")))
+    .orderBy(shopMembers.createdAt)
+    .limit(1);
+
+  if (!memberRows[0]?.shopId) return null;
+
+  const shopRows = await db
+    .select({ id: shops.id, name: shops.name })
+    .from(shops)
+    .where(eq(shops.id, memberRows[0].shopId))
+    .limit(1);
+
+  if (!shopRows[0]) return null;
+
+  return { shopId: shopRows[0].id, shopName: shopRows[0].name, userId: userRows[0].id };
+}
+
+export async function changeLicenseTier({ shopId, planCode }: { shopId: string; planCode: string }) {
+  const now = new Date();
+
+  const [plan] = await db.select().from(licensePlans).where(eq(licensePlans.code, planCode)).limit(1);
+
+  const [license] = await db
+    .update(shopLicenses)
+    .set({
+      planCode,
+      maxOrdersPerMonth: plan?.maxOrdersPerMonth ?? null,
+      maxLiveSessionsPerMonth: plan?.maxLiveSessionsPerMonth ?? null,
+      maxMembers: plan?.maxMembers ?? null,
+      maxTiktokAccounts: plan?.maxTiktokAccounts ?? null,
+      updatedAt: now,
+    })
+    .where(and(eq(shopLicenses.shopId, shopId), eq(shopLicenses.isCurrent, true)))
+    .returning();
+
+  return license ?? null;
+}
+
+// Called by the expiry cron in server.ts — marks licenses past their expiredAt as inactive.
+export async function expireOldLicenses(): Promise<number> {
+  const now = new Date();
+  const result = await db
+    .update(shopLicenses)
+    .set({ status: "inactive", updatedAt: now })
+    .where(
+      and(
+        eq(shopLicenses.isCurrent, true),
+        eq(shopLicenses.status, "active"),
+        lte(shopLicenses.expiredAt, now),
+      ),
+    )
+    .returning({ id: shopLicenses.id });
+  return result.length;
 }

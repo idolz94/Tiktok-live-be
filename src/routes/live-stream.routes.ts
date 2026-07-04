@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../lib/async-handler.js";
+import logger from "../lib/logger.js";
 import { mutateOk, ok } from "../lib/response.js";
 import { addSseClient, getSseStats } from "../lib/sse-hub.js";
 import { requireAuth } from "../middlewares/auth.js";
@@ -14,6 +15,11 @@ const router = Router();
 
 const usernameSchema = z.object({
   username: z.string().min(1, "Thiếu username."),
+});
+
+const stopSchema = z.object({
+  username: z.string().min(1, "Thiếu username."),
+  silent: z.boolean().optional().default(false),
 });
 
 router.get(
@@ -29,7 +35,7 @@ router.get(
     response.flushHeaders?.();
 
     const clientId = String(request.query.clientId || randomUUID());
-    console.log(`[SSE] client connected clientId=${clientId} shopId=${context.shop.id} userId=${context.userId}`);
+    logger.debug({ clientId, shopId: context.shop.id, userId: context.userId }, "[SSE] client connected");
 
     const removeClient = addSseClient({
       id: clientId,
@@ -45,7 +51,7 @@ router.get(
     }, 25000);
 
     request.on("close", () => {
-      console.log(`[SSE] client disconnected clientId=${clientId} shopId=${context.shop.id}`);
+      logger.debug({ clientId, shopId: context.shop.id }, "[SSE] client disconnected");
       clearInterval(ping);
       removeClient();
     });
@@ -56,7 +62,7 @@ router.post(
   "/start",
   requireAuth,
   asyncHandler(async (request, response) => {
-    console.log("[LIVE-STREAM] POST /start hit — body:", JSON.stringify(request.body));
+    logger.debug({ body: request.body }, "[LIVE-STREAM] POST /start");
     const context = await requireUsableAccountContext(request);
     const body = usernameSchema.parse(request.body || {});
 
@@ -65,9 +71,9 @@ router.post(
         username: body.username,
         shopId: context.shop.id,
       });
-      console.log("[COLLECTOR_START]", JSON.stringify(collectorResult));
+      logger.info({ result: collectorResult }, "[COLLECTOR_START]");
     } catch (error: any) {
-      console.error("[COLLECTOR_START_FAILED]", error?.message || error);
+      logger.error({ err: error?.message || error }, "[COLLECTOR_START_FAILED]");
       return response.status(400).json({
         ok: false,
         message: error?.message || "Không thể kết nối TikTok live. Kiểm tra lại username hoặc tài khoản chưa live.",
@@ -85,15 +91,15 @@ router.post(
   requireAuth,
   asyncHandler(async (request, response) => {
     const context = await requireUsableAccountContext(request);
-    const username = String(request.body?.username || "").trim();
-    const silent = Boolean(request.body?.silent);
+    const body = stopSchema.parse(request.body || {});
+    const { username, silent } = body;
 
     const collector = await stopTikTokCollector({
       username,
       silent,
     });
 
-    console.log("[COLLECTOR_STOP]", JSON.stringify(collector));
+    logger.info({ result: collector }, "[COLLECTOR_STOP]");
 
     if (!silent) {
       // Fire-and-forget: don't wait for DB cleanup on the critical path

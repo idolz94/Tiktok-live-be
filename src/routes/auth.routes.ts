@@ -30,6 +30,10 @@ import { env } from "../config/env.js";
 
 const router = Router();
 
+const refreshBodySchema = z.object({
+  refreshToken: z.string().min(10).optional(),
+});
+
 const REFRESH_COOKIE = "lumi_refresh_token";
 const ACCESS_COOKIE = "lumi_access_token";
 const IS_PROD = env.nodeEnv === "production";
@@ -144,9 +148,10 @@ router.post(
 router.post(
   "/refresh",
   asyncHandler(async (request, response) => {
+    const body = refreshBodySchema.parse(request.body || {});
     const token: string =
       request.cookies?.[REFRESH_COOKIE] ||
-      (request.body as Record<string, string>)?.refreshToken ||
+      body.refreshToken ||
       "";
 
     if (!token) throw unauthorized("Refresh token không tồn tại.");

@@ -13,17 +13,23 @@ import {
 
 const router = Router();
 
+const XSS_PATTERN = /<[^>]*>|javascript:|on\w+\s*=/i;
+const safeText = (label: string) =>
+  z.string().refine((v) => !XSS_PATTERN.test(v), { message: `${label} không được chứa nội dung không hợp lệ` });
+const safeTextMin1 = (label: string) =>
+  z.string().min(1, `${label} không được trống`).refine((v) => !XSS_PATTERN.test(v), { message: `${label} không được chứa nội dung không hợp lệ` });
+
 const createSchema = z.object({
-  code: z.string().min(1, "Mã không được trống"),
-  name: z.string().nullish(),
-  color: z.string().nullish(),
+  code: safeTextMin1("Mã SP"),
+  name: safeText("Tên sản phẩm").nullish(),
+  color: safeText("Màu sắc").nullish(),
   price: z.number().min(0),
 });
 
 const updateSchema = z.object({
-  code: z.string().min(1).optional(),
-  name: z.string().nullish(),
-  color: z.string().nullish(),
+  code: safeTextMin1("Mã SP").optional(),
+  name: safeText("Tên sản phẩm").nullish(),
+  color: safeText("Màu sắc").nullish(),
   price: z.number().min(0).optional(),
 });
 

@@ -38,9 +38,9 @@ router.post(
   "/manual-confirm",
   requireAuth,
   asyncHandler(async (request, response) => {
-    await requireAccountContext(request);
+    const context = await requireAccountContext(request);
     const body = confirmSchema.parse(request.body || {});
-    const data = await confirmManualPayment({ paymentId: body.paymentId });
+    const data = await confirmManualPayment({ paymentId: body.paymentId, shopId: context.shop.id });
     return ok(response, data);
   }),
 );

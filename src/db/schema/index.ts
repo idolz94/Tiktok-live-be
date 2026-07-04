@@ -220,7 +220,7 @@ export const orders = pgTable("orders", {
   shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
   liveSessionId: uuid("live_session_id").references(() => liveSessions.id),
   customerId: uuid("customer_id").references(() => customers.id),
-  liveCommentId: uuid("live_comment_id"),
+  liveCommentId: uuid("live_comment_id").references(() => liveComments.id, { onDelete: "set null" }),
   orderCode: text("order_code"),
   source: text("source").default("live_comment"),
   customerName: text("customer_name"),
@@ -251,6 +251,7 @@ export const orders = pgTable("orders", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   uniqueIndex("orders_order_code_unique").on(table.orderCode),
+  index("orders_shop_id_created_at_idx").on(table.shopId, table.createdAt),
 ]);
 
 // ─── order_items ──────────────────────────────────────────────────────────────
@@ -364,9 +365,9 @@ export const liveComments = pgTable("live_comments", {
   tiktokUniqueId: text("tiktok_unique_id"),
   displayName: text("display_name"),
   avatarUrl: text("avatar_url"),
-  commentText: text("comment_text"),
-  text: text("text"),
-  rawText: text("raw_text"),
+  commentText: text("comment_text"),  // canonical write target — use this
+  text: text("text"),                  // legacy alias, kept for migration safety; reads fall back via getCommentText()
+  rawText: text("raw_text"),           // raw collector payload text before normalization
   intent: text("intent").default("normal"),
   priorityLevel: text("priority_level").default("normal"),
   finalScore: real("final_score").default(0),

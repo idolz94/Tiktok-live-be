@@ -1,7 +1,7 @@
 import type { Request } from "express";
 import { eq, and } from "drizzle-orm";
 import { db } from "../lib/db.js";
-import { users, shops, shopMembers } from "../db/schema/index.js";
+import { users, shops, shopMembers, orders, liveSessions } from "../db/schema/index.js";
 import { forbidden, unauthorized } from "../lib/api-error.js";
 import { createTrialLicense, getCurrentLicense, getLicenseState } from "./license.service.js";
 
@@ -122,4 +122,12 @@ export async function requireUsableAccountContext(request: Request) {
     throw forbidden("Shop đã hết hạn dùng thử hoặc chưa có license.");
   }
   return context;
+}
+
+export async function getShopActivityFlags(shopId: string): Promise<{ hasOrders: boolean; hasHistory: boolean }> {
+  const [orderRow, historyRow] = await Promise.all([
+    db.select({ id: orders.id }).from(orders).where(eq(orders.shopId, shopId)).limit(1),
+    db.select({ id: liveSessions.id }).from(liveSessions).where(eq(liveSessions.shopId, shopId)).limit(1),
+  ]);
+  return { hasOrders: orderRow.length > 0, hasHistory: historyRow.length > 0 };
 }

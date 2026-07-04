@@ -1,5 +1,6 @@
 import { Worker } from "bullmq";
 import { assertRequiredEnv } from "../config/env.js";
+import logger from "../lib/logger.js";
 import { getRedisConnectionOptions } from "../lib/redis.js";
 
 assertRequiredEnv();
@@ -7,14 +8,14 @@ assertRequiredEnv();
 const connection = getRedisConnectionOptions();
 
 if (!connection) {
-  console.log("Worker disabled. Set REDIS_URL to run BullMQ workers.");
+  logger.warn("Worker disabled. Set REDIS_URL to run BullMQ workers.");
   process.exit(0);
 }
 
 const liveEventsWorker = new Worker(
   "live-events",
   async (job) => {
-    console.log("LIVE_EVENT_JOB", job.name, job.data);
+    logger.info({ name: job.name, data: job.data }, "LIVE_EVENT_JOB");
     // Chỗ này để mở rộng: AI scoring comment, tổng hợp báo cáo, gửi Telegram, cập nhật usage log...
   },
   { connection },
@@ -23,13 +24,13 @@ const liveEventsWorker = new Worker(
 const paymentEventsWorker = new Worker(
   "payment-events",
   async (job) => {
-    console.log("PAYMENT_EVENT_JOB", job.name, job.data);
+    logger.info({ name: job.name, data: job.data }, "PAYMENT_EVENT_JOB");
     // Chỗ này để mở rộng: verify webhook payment, active license, gửi invoice...
   },
   { connection },
 );
 
-liveEventsWorker.on("failed", (job, error) => console.error("LIVE_EVENT_FAILED", job?.id, error));
-paymentEventsWorker.on("failed", (job, error) => console.error("PAYMENT_EVENT_FAILED", job?.id, error));
+liveEventsWorker.on("failed", (job, error) => logger.error({ jobId: job?.id, err: error }, "LIVE_EVENT_FAILED"));
+paymentEventsWorker.on("failed", (job, error) => logger.error({ jobId: job?.id, err: error }, "PAYMENT_EVENT_FAILED"));
 
-console.log("Lumi workers are running.");
+logger.info("Lumi workers are running.");

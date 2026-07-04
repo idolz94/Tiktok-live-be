@@ -1,6 +1,7 @@
 import type { NextFunction, Request, Response } from "express";
 import { ZodError } from "zod";
 import { ApiError } from "../lib/api-error.js";
+import logger from "../lib/logger.js";
 
 export function notFoundHandler(request: Request, response: Response) {
   response.status(404).json({
@@ -29,7 +30,7 @@ export function errorHandler(error: unknown, _request: Request, response: Respon
     });
   }
 
-  console.error("UNHANDLED_ERROR", error);
+  logger.error({ err: error }, "UNHANDLED_ERROR");
 
   return response.status(500).json({
     ok: false,

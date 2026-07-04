@@ -3,6 +3,8 @@ import { eq } from "drizzle-orm";
 import { db } from "../lib/db.js";
 import { payments } from "../db/schema/index.js";
 import { activateLicenseFromPayment } from "./license.service.js";
+import { env } from "../config/env.js";
+import { badRequest, forbidden, notFound } from "../lib/api-error.js";
 
 export async function createManualCheckout({
   shopId,
@@ -28,7 +30,7 @@ export async function createManualCheckout({
       amount,
       currency: "VND",
       status: "pending",
-      checkoutUrl: process.env.PAYMENT_RETURN_URL || "",
+      checkoutUrl: env.paymentReturnUrl,
       rawPayload: {},
     })
     .returning();
@@ -40,7 +42,7 @@ export async function createManualCheckout({
   };
 }
 
-export async function confirmManualPayment({ paymentId }: { paymentId: string }) {
+export async function confirmManualPayment({ paymentId, shopId }: { paymentId: string; shopId: string }) {
   const rows = await db
     .select()
     .from(payments)
@@ -48,7 +50,9 @@ export async function confirmManualPayment({ paymentId }: { paymentId: string })
     .limit(1);
 
   const payment = rows[0];
-  if (!payment) throw new Error("Không tìm thấy payment.");
+  if (!payment) throw notFound("Không tìm thấy payment.");
+  if (payment.shopId !== shopId) throw forbidden("Không có quyền xác nhận payment này.");
+  if (payment.status !== "pending") throw badRequest("Payment đã được xử lý trước đó.");
 
   const license = await activateLicenseFromPayment({
     shopId: payment.shopId,

@@ -1,12 +1,9 @@
 import { Router } from "express";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
-import { db } from "../lib/db.js";
-import { orders, liveSessions } from "../db/schema/index.js";
 import { asyncHandler } from "../lib/async-handler.js";
 import { mutateOk, ok } from "../lib/response.js";
 import { requireAuth } from "../middlewares/auth.js";
-import { bootstrapAccountContext, requireShopId } from "../services/account.service.js";
+import { bootstrapAccountContext, getShopActivityFlags, requireShopId } from "../services/account.service.js";
 import {
   enrichTikTokChannelProfiles,
   listTikTokChannels,
@@ -32,16 +29,9 @@ router.get(
       : [];
     if (context.shop?.id) void enrichTikTokChannelProfiles(context.shop.id);
 
-    let hasOrders = false;
-    let hasHistory = false;
-    if (context.shop?.id) {
-      const [orderRow, historyRow] = await Promise.all([
-        db.select({ id: orders.id }).from(orders).where(eq(orders.shopId, context.shop.id)).limit(1),
-        db.select({ id: liveSessions.id }).from(liveSessions).where(eq(liveSessions.shopId, context.shop.id)).limit(1),
-      ]);
-      hasOrders = orderRow.length > 0;
-      hasHistory = historyRow.length > 0;
-    }
+    const { hasOrders, hasHistory } = context.shop?.id
+      ? await getShopActivityFlags(context.shop.id)
+      : { hasOrders: false, hasHistory: false };
 
     return ok(response, {
       userId: context.userId,

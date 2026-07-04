@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import { TikTokLiveConnection, WebcastEvent, ControlEvent } from "tiktok-live-connector";
 import { broadcastSseToShop } from "../lib/sse-hub.js";
 import { enqueueLiveEvent } from "../lib/queues.js";
+import logger from "../lib/logger.js";
 import {
   ensureCollectorLiveSession,
   findShopOwnerUserId,
@@ -130,7 +131,7 @@ async function ingestLiveEvent(room: RoomState, eventType: string) {
   });
 
   if (!shop?.id) {
-    console.warn(`[TIKTOK] ${room.username} → ${eventType}: shop not found`);
+    logger.warn(`[TIKTOK] ${room.username} → ${eventType}: shop not found`);
     return null;
   }
 
@@ -165,7 +166,7 @@ async function onConnected(room: RoomState, roomId: string | null) {
   broadcastSseToShop(result.shopId, "LIVE_CONNECTED", payload);
   await enqueueLiveEvent("collector-live-connected", payload);
 
-  console.log(`[TIKTOK] ${room.username} → LIVE_CONNECTED session=${session.id}`);
+  logger.debug({ username: room.username, sessionId: session.id }, "[TIKTOK] LIVE_CONNECTED");
 }
 
 async function onDisconnected(room: RoomState) {
@@ -346,10 +347,10 @@ async function connectRoom(room: RoomState) {
   room.connection = connection;
 
   connection.on(ControlEvent.DISCONNECTED, () => {
-    console.log(`[TIKTOK] ${room.username} disconnected`);
+    logger.debug({ username: room.username }, "[TIKTOK] disconnected");
     room.isRunning = false;
     onDisconnected(room).catch((e) =>
-      console.error(`[TIKTOK] onDisconnected error:`, e?.message),
+      logger.error({ err: e?.message }, "[TIKTOK] onDisconnected error"),
     );
     rooms.delete(room.username);
   });
@@ -358,12 +359,12 @@ async function connectRoom(room: RoomState) {
     const message =
       err?.message ||
       (typeof err === "object" ? JSON.stringify(err) : String(err));
-    console.error(`[TIKTOK] ${room.username} error: isRunning=${room.isRunning} isConnecting=${room.isConnecting} msg=${message}`);
+    logger.error({ username: room.username, isRunning: room.isRunning, isConnecting: room.isConnecting, err: message }, "[TIKTOK] error");
 
     // Non-fatal if already running OR still in the process of connecting
     // (tiktok-live-connector can emit ERROR for transient issues during handshake)
     if (room.isRunning || room.isConnecting) {
-      console.warn(`[TIKTOK] ${room.username} non-fatal error (running=${room.isRunning} connecting=${room.isConnecting}) — ignoring`);
+      logger.warn({ username: room.username, isRunning: room.isRunning, isConnecting: room.isConnecting }, "[TIKTOK] non-fatal error — ignoring");
       room.lastError = message;
       return;
     }
@@ -371,7 +372,7 @@ async function connectRoom(room: RoomState) {
     room.lastError = message;
     room.isRunning = false;
     onError(room, message).catch((e) =>
-      console.error(`[TIKTOK] onError handler error:`, e?.message),
+      logger.error({ err: e?.message }, "[TIKTOK] onError handler error"),
     );
     rooms.delete(room.username);
   });
@@ -380,7 +381,7 @@ async function connectRoom(room: RoomState) {
     room.commentCount += 1;
     room.lastCommentAt = nowIso();
     ingestComment(room, data).catch((e) =>
-      console.error(`[TIKTOK] ingestComment error:`, e?.message),
+      logger.error({ err: e?.message }, "[TIKTOK] ingestComment error"),
     );
   });
 
@@ -394,12 +395,12 @@ async function connectRoom(room: RoomState) {
     onUserJoined(room, data).catch(() => {});
   });
 
-  console.log(`[TIKTOK] ${room.username} calling connection.connect()...`);
+  logger.debug({ username: room.username, roomId: room.roomId }, "[TIKTOK] calling connect");
   const state = await connection.connect();
   room.roomId = state?.roomId || null;
   room.isRunning = true;
   room.isConnecting = false;
-  console.log(`[TIKTOK] ${room.username} connected — roomId=${room.roomId} isRunning=${room.isRunning}`);
+  logger.debug({ username: room.username, roomId: room.roomId }, "[TIKTOK] connected");
 
   await onConnected(room, room.roomId);
 }
@@ -445,10 +446,10 @@ export async function startTikTokCollector({
 
   rooms.set(normalized, room);
 
-  console.log(`[TIKTOK] startTikTokCollector @${normalized} shopId=${shopId}`);
+  logger.debug({ username: normalized, shopId }, "[TIKTOK] startTikTokCollector");
   connectRoom(room).catch((err) => {
     const message = err?.message || String(err);
-    console.error(`[TIKTOK] connectRoom failed for ${normalized}:`, message);
+    logger.error({ username: normalized, err: message }, "[TIKTOK] connectRoom failed");
     room.isConnecting = false;
     room.isRunning = false;
     room.lastError = message;
