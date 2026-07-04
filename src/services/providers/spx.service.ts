@@ -124,6 +124,9 @@ export type SpxCreateOrderParams = {
   deliverState: string;
   deliverCity: string;
   deliverDetailAddress: string;
+  allowMutualCheck?: 0 | 1;
+  allowTryOn?: 0 | 1;
+  allowPartialDelivery?: 0 | 1;
   itemList?: SpxOrderItem[];
 };
 
@@ -171,6 +174,10 @@ export async function spxCreateOrder(params: SpxCreateOrderParams): Promise<SpxC
       ...(params.voucherCode ? { voucher_code: params.voucherCode } : {}),
       ...(params.collectType === 1 && params.pickupTime ? { pickup_time: params.pickupTime } : {}),
       ...(params.collectType === 1 && params.pickupTimeRangeId ? { pickup_time_range_id: params.pickupTimeRangeId } : {}),
+      ...(params.pickupTimeRange ? { pickup_time_range: params.pickupTimeRange } : {}),
+      ...(params.allowMutualCheck !== undefined ? { allow_mutual_check: params.allowMutualCheck } : {}),
+      ...(params.allowTryOn !== undefined ? { allow_try_on: params.allowTryOn } : {}),
+      ...(params.allowPartialDelivery !== undefined ? { allow_partial_delivery: params.allowPartialDelivery } : {}),
     },
     parcel_info: {
       parcel_weight: params.parcelWeightGram / 1000,

@@ -5,8 +5,7 @@ import { mutateOk, ok } from "../lib/response.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { bootstrapAccountContext, getShopActivityFlags, requireShopId } from "../services/account.service.js";
 import {
-  enrichTikTokChannelProfiles,
-  listTikTokChannels,
+  listTikTokChannelsWithBackfill,
   updateTikTokChannel,
 } from "../services/tiktok-channels.service.js";
 
@@ -25,9 +24,8 @@ router.get(
     const context = await bootstrapAccountContext(request);
 
     const tiktokChannels = context.shop?.id
-      ? await listTikTokChannels(context.shop.id)
+      ? await listTikTokChannelsWithBackfill(context.shop.id)
       : [];
-    if (context.shop?.id) void enrichTikTokChannelProfiles(context.shop.id);
 
     const { hasOrders, hasHistory } = context.shop?.id
       ? await getShopActivityFlags(context.shop.id)
@@ -57,7 +55,8 @@ router.get(
     const context = await bootstrapAccountContext(request);
     const shopId = context.shop?.id;
     if (!shopId) return ok(response, { channels: [] });
-    const channels = await listTikTokChannels(shopId);
+
+    const channels = await listTikTokChannelsWithBackfill(shopId);
     return ok(response, { channels });
   }),
 );

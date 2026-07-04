@@ -12,13 +12,19 @@ if (!connection) {
   process.exit(0);
 }
 
+const workerOpts = {
+  connection,
+  removeOnComplete: { count: 100 },
+  removeOnFail: { count: 500 },
+};
+
 const liveEventsWorker = new Worker(
   "live-events",
   async (job) => {
     logger.info({ name: job.name, data: job.data }, "LIVE_EVENT_JOB");
     // Chỗ này để mở rộng: AI scoring comment, tổng hợp báo cáo, gửi Telegram, cập nhật usage log...
   },
-  { connection },
+  workerOpts,
 );
 
 const paymentEventsWorker = new Worker(
@@ -27,7 +33,7 @@ const paymentEventsWorker = new Worker(
     logger.info({ name: job.name, data: job.data }, "PAYMENT_EVENT_JOB");
     // Chỗ này để mở rộng: verify webhook payment, active license, gửi invoice...
   },
-  { connection },
+  workerOpts,
 );
 
 liveEventsWorker.on("failed", (job, error) => logger.error({ jobId: job?.id, err: error }, "LIVE_EVENT_FAILED"));

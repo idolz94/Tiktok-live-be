@@ -6,6 +6,7 @@ import helmet from "helmet";
 import morgan from "morgan";
 import { env } from "./config/env.js";
 import { errorHandler, notFoundHandler } from "./middlewares/error.js";
+import { requestId } from "./middlewares/request-id.js";
 import authRoutes from "./routes/auth.routes.js";
 import customersRoutes from "./routes/customers.routes.js";
 import customerAddressesRoutes from "./routes/customer-addresses.routes.js";
@@ -52,6 +53,7 @@ export function createApp() {
   const app = express();
 
   app.use(helmet());
+  app.use(requestId);
   app.use(
     cors({
       origin(origin, callback) {

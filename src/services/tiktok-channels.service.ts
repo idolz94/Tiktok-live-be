@@ -1,16 +1,93 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { db } from "../lib/db.js";
 import { tiktokChannels, shops } from "../db/schema/index.js";
 import { badRequest, notFound } from "../lib/api-error.js";
 import { normalizeAtUsername } from "../utils/tiktok.js";
+// @ts-ignore — tiktok-live-connector ships ESM without declaration files
 import { TikTokLiveConnection } from "tiktok-live-connector";
+
+interface TikTokProfile {
+  displayName: string | null;
+  avatarUrl: string | null;
+  followerCount: number | null;
+}
+
+export async function fetchTikTokProfile(username: string): Promise<TikTokProfile> {
+  try {
+    // @ts-ignore
+    const connection = new TikTokLiveConnection(username);
+    const roomInfo = await connection.fetchRoomInfo();
+    const owner = roomInfo?.data?.owner ?? roomInfo?.data?.user ?? null;
+    if (!owner) return { displayName: null, avatarUrl: null, followerCount: null };
+
+    const displayName: string | null = owner.nickname ?? null;
+    const avatarUrl: string | null =
+      owner.avatarThumb?.urlList?.[0] ?? owner.avatarThumb?.url ?? null;
+    const rawCount = owner.followInfo?.followerCount;
+    const followerCount: number | null =
+      typeof rawCount === "number"
+        ? rawCount
+        : typeof rawCount === "string"
+        ? parseInt(rawCount, 10) || null
+        : null;
+
+    return { displayName, avatarUrl, followerCount };
+  } catch {
+    return { displayName: null, avatarUrl: null, followerCount: null };
+  }
+}
 
 export async function listTikTokChannels(shopId: string) {
   return db
     .select()
     .from(tiktokChannels)
     .where(eq(tiktokChannels.shopId, shopId))
-    .orderBy(tiktokChannels.isDefault, tiktokChannels.createdAt);
+    .orderBy(desc(tiktokChannels.isDefault), tiktokChannels.createdAt);
+}
+
+export async function listTikTokChannelsWithBackfill(shopId: string) {
+  const rows = await listTikTokChannels(shopId);
+  const needsBackfill = rows.filter((c) => !c.avatarUrl);
+  if (needsBackfill.length === 0) return rows;
+
+  const backfilled = await Promise.allSettled(
+    needsBackfill.map(async (c) => {
+      const profile = await fetchTikTokProfile(c.tiktokUsername);
+      if (profile.avatarUrl) {
+        await updateTikTokChannelProfile(shopId, c.tiktokUsername, profile);
+      }
+      return { id: c.id, ...profile };
+    }),
+  );
+
+  const enriched = new Map(
+    backfilled
+      .flatMap((r) => (r.status === "fulfilled" ? [r.value] : []))
+      .map((v) => [v.id, v]),
+  );
+
+  return rows.map((c) => {
+    const e = enriched.get(c.id);
+    if (!e) return c;
+    return {
+      ...c,
+      displayName: e.displayName ?? c.displayName,
+      avatarUrl: e.avatarUrl ?? c.avatarUrl,
+      followerCount: e.followerCount ?? c.followerCount,
+    };
+  });
+}
+
+async function fetchDisplayNameFromOEmbed(username: string): Promise<string | null> {
+  try {
+    const url = `https://www.tiktok.com/oembed?url=https://www.tiktok.com/@${encodeURIComponent(username)}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return null;
+    const json = await res.json() as { author_name?: string };
+    return json.author_name ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export async function createTikTokChannel({
@@ -31,12 +108,18 @@ export async function createTikTokChannel({
     await clearDefaultTikTokChannel(shopId);
   }
 
+  const profile = await fetchTikTokProfile(normalizedUsername);
+  const resolvedDisplayName =
+    displayName ?? profile.displayName ?? (await fetchDisplayNameFromOEmbed(normalizedUsername));
+
   const [channel] = await db
     .insert(tiktokChannels)
     .values({
       shopId,
       tiktokUsername: normalizedUsername,
-      displayName: displayName ?? null,
+      displayName: resolvedDisplayName ?? null,
+      avatarUrl: profile.avatarUrl ?? null,
+      followerCount: profile.followerCount ?? null,
       isDefault,
     })
     .returning();
@@ -132,31 +215,23 @@ async function updateShopDefaultTikTokUsername(shopId: string, tiktokUsername: s
     .where(eq(shops.id, shopId));
 }
 
-export async function enrichTikTokChannelProfiles(shopId: string): Promise<void> {
-  const channels = await listTikTokChannels(shopId);
-  await Promise.allSettled(
-    channels.map(async (channel) => {
-      try {
-        const conn = new TikTokLiveConnection(channel.tiktokUsername);
-        const info: any = await conn.fetchRoomInfo();
-        const owner = info?.data?.owner;
-        if (!owner) return;
-        const displayName: string | null = owner.nickname ?? null;
-        const avatarUrl: string | null =
-          owner.avatarThumb?.urlList?.[0] ?? owner.avatarThumb?.url ?? null;
-        const followerCount: number | null =
-          typeof owner.followInfo?.followerCount === "string"
-            ? parseInt(owner.followInfo.followerCount, 10) || null
-            : typeof owner.followInfo?.followerCount === "number"
-            ? owner.followInfo.followerCount
-            : null;
-        await db
-          .update(tiktokChannels)
-          .set({ displayName, avatarUrl, followerCount, updatedAt: new Date() })
-          .where(and(eq(tiktokChannels.id, channel.id), eq(tiktokChannels.shopId, shopId)));
-      } catch {
-        // non-blocking — skip channels that fail
-      }
-    }),
-  );
+export async function updateTikTokChannelProfile(
+  shopId: string,
+  tiktokUsername: string,
+  profile: { displayName?: string | null; avatarUrl?: string | null; followerCount?: number | null },
+): Promise<void> {
+  const patch: Record<string, unknown> = { updatedAt: new Date() };
+  if (profile.displayName !== undefined) patch.displayName = profile.displayName;
+  if (profile.avatarUrl !== undefined) patch.avatarUrl = profile.avatarUrl;
+  if (profile.followerCount !== undefined) patch.followerCount = profile.followerCount;
+
+  await db
+    .update(tiktokChannels)
+    .set(patch)
+    .where(
+      and(
+        eq(tiktokChannels.shopId, shopId),
+        eq(tiktokChannels.tiktokUsername, tiktokUsername),
+      ),
+    );
 }

@@ -79,6 +79,11 @@ const submitSpxSchema = z.object({
   declaredValue: z.number().int().nonnegative().optional(),
   note: z.string().optional(),
   idempotencyKey: z.string().uuid(),
+  paymentRole: z.union([z.literal(1), z.literal(2)]).optional(),
+  pickupTimeRange: z.string().optional(),
+  allowMutualCheck: z.union([z.literal(0), z.literal(1)]).optional(),
+  allowTryOn: z.union([z.literal(0), z.literal(1)]).optional(),
+  allowPartialDelivery: z.union([z.literal(0), z.literal(1)]).optional(),
   voucherCode: z.string().trim().min(1).optional(),
   customerAddressId: z.string().uuid().optional(),
 });
@@ -351,6 +356,11 @@ router.post(
       declaredValue: body.declaredValue,
       note: body.note,
       idempotencyKey: body.idempotencyKey,
+      paymentRole: body.paymentRole,
+      pickupTimeRange: body.pickupTimeRange,
+      allowMutualCheck: body.allowMutualCheck,
+      allowTryOn: body.allowTryOn,
+      allowPartialDelivery: body.allowPartialDelivery,
       voucherCode: body.voucherCode,
       customerAddressId: body.customerAddressId,
     });

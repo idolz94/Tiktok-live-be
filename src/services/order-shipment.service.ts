@@ -261,6 +261,11 @@ export type CreateSpxShipmentParams = {
   declaredValue?: number;
   note?: string;
   idempotencyKey: string;
+  paymentRole?: 1 | 2;
+  pickupTimeRange?: string;
+  allowMutualCheck?: 0 | 1;
+  allowTryOn?: 0 | 1;
+  allowPartialDelivery?: 0 | 1;
   voucherCode?: string;
   customerAddressId?: string;
 };
@@ -337,6 +342,11 @@ export async function createSpxShipment(params: CreateSpxShipmentParams) {
     declaredValue: params.declaredValue,
     codAmount: amounts.remainingAmount,
     voucherCode: params.voucherCode,
+    spxPaymentRole: params.paymentRole,
+    spxPickupTimeRange: params.pickupTimeRange,
+    spxAllowMutualCheck: params.allowMutualCheck,
+    spxAllowTryOn: params.allowTryOn,
+    spxAllowPartialDelivery: params.allowPartialDelivery,
     note: params.note,
   };
 

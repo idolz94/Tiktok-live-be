@@ -227,7 +227,6 @@ function isQuestion(text: string) {
       "không",
       "khong",
       "ko",
-      "k",
       "bao nhiêu",
       "bao nhieu",
       "mấy",

@@ -4,6 +4,7 @@ import { shops, shopLicenses, licensePlans, users, shopMembers } from "../db/sch
 import { env } from "../config/env.js";
 import { addDays } from "../utils/date.js";
 import { seedLicensePlans } from "../db/seed-license-plans.js";
+import { getRedis } from "../lib/redis.js";
 
 export type LicenseReason =
   | null
@@ -35,12 +36,31 @@ export function getLicenseState(license: any): { canUseApp: boolean; reason: Lic
 }
 
 export async function getCurrentLicense(shopId: string) {
+  const redis = getRedis();
+  const cacheKey = `license:current:${shopId}`;
+
+  if (redis) {
+    const cached = await redis.get(cacheKey).catch(() => null);
+    if (cached) return JSON.parse(cached);
+  }
+
   const rows = await db
     .select()
     .from(shopLicenses)
     .where(and(eq(shopLicenses.shopId, shopId), eq(shopLicenses.isCurrent, true)))
     .limit(1);
-  return rows[0] ?? null;
+  const license = rows[0] ?? null;
+
+  if (redis && license) {
+    redis.set(cacheKey, JSON.stringify(license), "EX", 60).catch(() => null);
+  }
+
+  return license;
+}
+
+export function invalidateLicenseCache(shopId: string) {
+  const redis = getRedis();
+  if (redis) redis.del(`license:current:${shopId}`).catch(() => null);
 }
 
 async function ensureTrialPlan() {

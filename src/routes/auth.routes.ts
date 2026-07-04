@@ -27,6 +27,9 @@ import {
 import { bootstrapAccountContext } from "../services/account.service.js";
 import { createTikTokChannel } from "../services/tiktok-channels.service.js";
 import { env } from "../config/env.js";
+import { rateLimit } from "../middlewares/rate-limit.js";
+
+const authRateLimit = rateLimit(10, 60_000); // 10 req/min per IP
 
 const router = Router();
 
@@ -79,6 +82,7 @@ const registerSchema = z.object({
 
 router.post(
   "/register",
+  authRateLimit,
   asyncHandler(async (request, response) => {
     const body = registerSchema.parse(request.body || {});
     const user = await registerUser({
@@ -125,6 +129,7 @@ const loginSchema = z.object({
 
 router.post(
   "/login",
+  authRateLimit,
   asyncHandler(async (request, response) => {
     const body = loginSchema.parse(request.body || {});
     const user = await loginUser({ username: body.username, password: body.password });
@@ -147,6 +152,7 @@ router.post(
 
 router.post(
   "/refresh",
+  authRateLimit,
   asyncHandler(async (request, response) => {
     const body = refreshBodySchema.parse(request.body || {});
     const token: string =

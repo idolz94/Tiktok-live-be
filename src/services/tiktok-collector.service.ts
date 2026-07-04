@@ -11,6 +11,7 @@ import {
 } from "./internal-live-ingest.service.js";
 import { endLiveSession } from "./live-sessions.service.js";
 import { saveLiveComment } from "./live-comments.service.js";
+import { updateTikTokChannelProfile } from "./tiktok-channels.service.js";
 
 // ─── Room state ───────────────────────────────────────────────────────────────
 
@@ -49,7 +50,7 @@ async function ingestComment(room: RoomState, data: any) {
     (Array.isArray(profilePicUrls) ? profilePicUrls[0] : profilePicUrls) ||
     user.profilePictureUrl || user.avatarUrl || data.profilePictureUrl || "";
   const commentText: string = data.comment || "";
-  const externalCommentId = String(data.msgId || data.id || randomUUID());
+  const externalCommentId = String(data.common?.msgId || data.msgId || data.id || randomUUID());
   const createdAt = nowIso();
 
   const shop = await resolveShopForCollectorEvent({
@@ -401,6 +402,26 @@ async function connectRoom(room: RoomState) {
   room.isRunning = true;
   room.isConnecting = false;
   logger.debug({ username: room.username, roomId: room.roomId }, "[TIKTOK] connected");
+
+  // Capture profile from roomInfo — only available when user is live
+  if (room.shopId) {
+    const roomInfo = state?.roomInfo ?? connection.roomInfo;
+    const owner = roomInfo?.data?.owner ?? roomInfo?.data?.user;
+    if (owner) {
+      const displayName: string | null = owner.nickname ?? null;
+      const avatarUrl: string | null =
+        owner.avatarThumb?.urlList?.[0] ?? owner.avatarThumb?.url ?? null;
+      const followerCount: number | null =
+        typeof owner.followInfo?.followerCount === "number"
+          ? owner.followInfo.followerCount
+          : typeof owner.followInfo?.followerCount === "string"
+          ? parseInt(owner.followInfo.followerCount, 10) || null
+          : null;
+      updateTikTokChannelProfile(room.shopId, room.username, { displayName, avatarUrl, followerCount }).catch(
+        (e) => logger.warn({ err: e?.message }, "[TIKTOK] updateTikTokChannelProfile failed"),
+      );
+    }
+  }
 
   await onConnected(room, room.roomId);
 }

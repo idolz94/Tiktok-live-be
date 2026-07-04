@@ -94,7 +94,8 @@ export function createSpxAdapter(): ShippingProviderAdapter {
           collectType: spx.spxCollectType ?? 1,
           pickupTime: spx.spxPickupTime,
           pickupTimeRangeId: spx.spxPickupTimeRangeId,
-          paymentRole: 1,
+          pickupTimeRange: spx.spxPickupTimeRange,
+          paymentRole: spx.spxPaymentRole ?? 1,
           highValueProcessingCollection: 0,
           parcelWeightGram: spx.parcelWeightGram ?? 300,
           parcelLengthCm: spx.parcelLengthCm,
@@ -104,6 +105,9 @@ export function createSpxAdapter(): ShippingProviderAdapter {
           declaredValue: spx.declaredValue,
           codAmount: spx.codAmount ?? 0,
           voucherCode: spx.voucherCode,
+          allowMutualCheck: spx.spxAllowMutualCheck,
+          allowTryOn: spx.spxAllowTryOn,
+          allowPartialDelivery: spx.spxAllowPartialDelivery,
           orderId: params.orderId,
           senderName: params.pickName,
           senderPhone: params.pickTel,
@@ -230,6 +234,11 @@ export type SpxShippingSubmitParams = ShippingSubmitParams & {
   spxCollectType?: 1 | 2;
   spxPickupTimeRangeId?: number;
   spxPickupTime?: number;
+  spxPickupTimeRange?: string;
+  spxPaymentRole?: 1 | 2;
+  spxAllowMutualCheck?: 0 | 1;
+  spxAllowTryOn?: 0 | 1;
+  spxAllowPartialDelivery?: 0 | 1;
   parcelWeightGram?: number;
   parcelLengthCm?: number;
   parcelWidthCm?: number;

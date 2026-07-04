@@ -22,3 +22,9 @@ export async function enqueueLiveEvent(name: string, data: Record<string, unknow
   if (!queue) return null;
   return queue.add(name, data, { attempts: 3, backoff: { type: "exponential", delay: 3000 } });
 }
+
+export async function enqueuePaymentEvent(name: string, data: Record<string, unknown>) {
+  const queue = getQueue("payment-events");
+  if (!queue) return null;
+  return queue.add(name, data, { attempts: 3, backoff: { type: "exponential", delay: 3000 } });
+}

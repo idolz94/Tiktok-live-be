@@ -1,16 +1,37 @@
 import { createApp } from "./app.js";
 import { assertRequiredEnv, env } from "./config/env.js";
 import logger from "./lib/logger.js";
+import { getRedis } from "./lib/redis.js";
 import { expireOldLicenses } from "./services/license.service.js";
 
 assertRequiredEnv();
 
 const app = createApp();
 
-app.listen(env.port, () => {
+const server = app.listen(env.port, () => {
   logger.info(`Lumi backend is running at http://localhost:${env.port}`);
 
   // ponytail: run once at startup then every hour — no external scheduler needed
   expireOldLicenses().catch(() => {});
   setInterval(() => expireOldLicenses().catch(() => {}), 60 * 60 * 1000);
 });
+
+async function shutdown(signal: string) {
+  logger.info({ signal }, "Graceful shutdown started");
+  server.close(async () => {
+    try {
+      const redis = getRedis();
+      if (redis) await redis.quit();
+    } catch {
+      // best-effort
+    }
+    logger.info("Shutdown complete");
+    process.exit(0);
+  });
+
+  // force-kill if drain takes too long
+  setTimeout(() => process.exit(1), 15_000).unref();
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
