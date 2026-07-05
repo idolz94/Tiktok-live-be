@@ -7,6 +7,8 @@ export type ShippingFeeResult = {
   delivery?: boolean;
   extFees?: Array<{ title: string; amount: number; type: string }>;
   raw?: unknown;
+  edtMin?: number | null;
+  edtMax?: number | null;
 };
 
 export type ShippingSubmitResult = {

@@ -76,7 +76,7 @@ export function createSpxAdapter(): ShippingProviderAdapter {
         deliverDetailAddress: params.receiverAddress || SPX_DEFAULT_RECEIVER.detailAddress,
       });
 
-      return { providerCode: "spx", fee: fee.fee };
+      return { providerCode: "spx", fee: fee.fee, edtMin: fee.edtMin, edtMax: fee.edtMax };
     },
 
     async submit(params: ShippingSubmitParams): Promise<ShippingSubmitResult> {

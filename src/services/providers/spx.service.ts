@@ -307,6 +307,8 @@ export type SpxFeeResult = {
   fee: number;
   basicFee: number;
   codServiceFee: number;
+  edtMin: number | null;
+  edtMax: number | null;
 };
 
 export async function spxBatchCheckFee(params: {
@@ -373,6 +375,8 @@ export async function spxBatchCheckFee(params: {
     fee: Number(first["estimated_shipping_fee"] ?? 0),
     basicFee: Number(first["basic_shipping_fee"] ?? 0),
     codServiceFee: Number(first["cod_service_fee"] ?? 0),
+    edtMin: first["edt_min"] != null ? Number(first["edt_min"]) : null,
+    edtMax: first["edt_max"] != null ? Number(first["edt_max"]) : null,
   };
 }
 
