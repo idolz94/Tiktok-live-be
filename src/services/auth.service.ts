@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { eq, and } from "drizzle-orm";
+import { eq, and, or } from "drizzle-orm";
 import { db } from "../lib/db.js";
 import { users, oauthAccounts, refreshTokens } from "../db/schema/index.js";
 import { env } from "../config/env.js";
@@ -109,31 +109,14 @@ export async function registerUser(input: {
 export async function loginUser(input: { username: string; password: string }) {
   const identifier = input.username.trim().toLowerCase();
 
-  // Accept username, email, or phone
+  // Accept username, email, or phone — single query
   const rows = await db
     .select()
     .from(users)
-    .where(eq(users.username, identifier))
+    .where(or(eq(users.username, identifier), eq(users.email, identifier), eq(users.phone, identifier)))
     .limit(1);
 
-  // Try email/phone if not found by username
   let user = rows[0] ?? null;
-  if (!user) {
-    const byEmail = await db
-      .select()
-      .from(users)
-      .where(eq(users.email, identifier))
-      .limit(1);
-    user = byEmail[0] ?? null;
-  }
-  if (!user) {
-    const byPhone = await db
-      .select()
-      .from(users)
-      .where(eq(users.phone, identifier))
-      .limit(1);
-    user = byPhone[0] ?? null;
-  }
 
   if (!user || !user.passwordHash) {
     throw unauthorized("Sai username hoặc mật khẩu.");

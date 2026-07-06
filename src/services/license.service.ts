@@ -1,10 +1,9 @@
 import { eq, and, or, lte } from "drizzle-orm";
-import { db } from "../lib/db.js";
+import { db, type DbOrTx } from "../lib/db.js";
 import { shops, shopLicenses, licensePlans, users, shopMembers } from "../db/schema/index.js";
 import { env } from "../config/env.js";
 import { addDays } from "../utils/date.js";
 import { seedLicensePlans } from "../db/seed-license-plans.js";
-import { getRedis } from "../lib/redis.js";
 
 export type LicenseReason =
   | null
@@ -36,31 +35,12 @@ export function getLicenseState(license: any): { canUseApp: boolean; reason: Lic
 }
 
 export async function getCurrentLicense(shopId: string) {
-  const redis = getRedis();
-  const cacheKey = `license:current:${shopId}`;
-
-  if (redis) {
-    const cached = await redis.get(cacheKey).catch(() => null);
-    if (cached) return JSON.parse(cached);
-  }
-
   const rows = await db
     .select()
     .from(shopLicenses)
     .where(and(eq(shopLicenses.shopId, shopId), eq(shopLicenses.isCurrent, true)))
     .limit(1);
-  const license = rows[0] ?? null;
-
-  if (redis && license) {
-    redis.set(cacheKey, JSON.stringify(license), "EX", 60).catch(() => null);
-  }
-
-  return license;
-}
-
-export function invalidateLicenseCache(shopId: string) {
-  const redis = getRedis();
-  if (redis) redis.del(`license:current:${shopId}`).catch(() => null);
+  return rows[0] ?? null;
 }
 
 async function ensureTrialPlan() {
@@ -70,12 +50,12 @@ async function ensureTrialPlan() {
   }
 }
 
-export async function createTrialLicense(shopId: string) {
+export async function createTrialLicense(shopId: string, tx: DbOrTx = db) {
   await ensureTrialPlan();
   const now = new Date();
   const trialEndsAt = addDays(now, env.trialDays).toISOString();
 
-  const [license] = await db
+  const [license] = await tx
     .insert(shopLicenses)
     .values({
       shopId,
@@ -97,7 +77,7 @@ export async function createTrialLicense(shopId: string) {
     })
     .returning();
 
-  await db
+  await tx
     .update(shops)
     .set({ licenseStatus: "trialing", trialEndsAt: new Date(trialEndsAt), updatedAt: now })
     .where(eq(shops.id, shopId));

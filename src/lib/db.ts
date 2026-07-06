@@ -19,3 +19,4 @@ export const db = drizzle(sql, {
 });
 
 export type DB = typeof db;
+export type DbOrTx = DB | Parameters<Parameters<DB["transaction"]>[0]>[0];

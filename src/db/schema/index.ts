@@ -137,7 +137,9 @@ export const tiktokChannels = pgTable("shop_tiktok_channels", {
   status: text("status").default("active"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  uniqueIndex("tiktok_channels_shop_username_unique").on(table.shopId, table.tiktokUsername),
+]);
 
 // ─── live_sessions ────────────────────────────────────────────────────────────
 export const liveSessions = pgTable("live_sessions", {
@@ -156,7 +158,9 @@ export const liveSessions = pgTable("live_sessions", {
   endReason: text("end_reason"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  index("live_sessions_shop_id_created_at_idx").on(table.shopId, table.createdAt),
+]);
 
 // ─── customers ────────────────────────────────────────────────────────────────
 export const customers = pgTable("customers", {
@@ -174,12 +178,14 @@ export const customers = pgTable("customers", {
   note: text("note"),
   tags: jsonb("tags").default([]),
   totalOrders: integer("total_orders").default(0),
-  totalSpent: real("total_spent").default(0),
+  totalSpent: integer("total_spent").default(0),
   lastOrderAt: timestamp("last_order_at", { withTimezone: true }),
   status: text("status").default("active"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  uniqueIndex("customers_shop_tiktok_username_unique").on(table.shopId, table.tiktokUsername),
+]);
 
 // ─── shop_addresses ───────────────────────────────────────────────────────────
 export const shopAddresses = pgTable("shop_addresses", {
@@ -265,11 +271,13 @@ export const orderItems = pgTable("order_items", {
   color: text("color"),
   size: text("size"),
   quantity: integer("quantity").default(1),
-  price: real("price").default(0),
+  price: integer("price").default(0),
   rawCommentText: text("raw_comment_text"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  index("order_items_order_id_idx").on(table.orderId),
+]);
 
 // ─── order_shipments ─────────────────────────────────────────────────────────
 export const orderShipments = pgTable("order_shipments", {
@@ -379,7 +387,7 @@ export const liveComments = pgTable("live_comments", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
-  uniqueIndex("live_comments_shop_external_comment_id_unique").on(table.shopId, table.externalCommentId),
+  uniqueIndex("live_comments_session_external_comment_id_unique").on(table.liveSessionId, table.externalCommentId),
 ]);
 
 // ─── payments ─────────────────────────────────────────────────────────────────
@@ -390,7 +398,7 @@ export const payments = pgTable("payments", {
   paymentCode: text("payment_code"),
   planCode: text("plan_code").references(() => licensePlans.code),
   months: integer("months").default(1),
-  amount: real("amount").default(0),
+  amount: integer("amount").default(0),
   currency: text("currency").default("VND"),
   status: text("status").default("pending"),
   checkoutUrl: text("checkout_url"),

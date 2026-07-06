@@ -34,7 +34,7 @@ export function errorHandler(error: unknown, _request: Request, response: Respon
 
   return response.status(500).json({
     ok: false,
-    message: error instanceof Error ? error.message : "Server lỗi.",
+    message: process.env.NODE_ENV === "production" ? "Server lỗi." : (error instanceof Error ? error.message : "Server lỗi."),
     code: "INTERNAL_SERVER_ERROR",
   });
 }

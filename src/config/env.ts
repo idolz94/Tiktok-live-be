@@ -45,9 +45,6 @@ export const env = {
   // Mobile app key
   mobileAppKey: readEnv("MOBILE_APP_KEY", "LUMI_APP_REACT_KEY"),
 
-  // Redis
-  redisUrl: readEnv("REDIS_URL"),
-
   // Payment
   paymentReturnUrl: readEnv("PAYMENT_RETURN_URL"),
 

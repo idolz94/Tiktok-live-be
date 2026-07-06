@@ -4,7 +4,7 @@ import { unauthorized } from "../lib/api-error.js";
 
 export function requireInternalApiKey(request: Request, _response: Response, next: NextFunction) {
   try {
-    const key = String(request.headers["x-internal-api-key"] || request.query.internalApiKey || "").trim();
+    const key = String(request.headers["x-internal-api-key"] || "").trim();
 
     if (!env.nodeInternalApiKey) {
       throw unauthorized("NODE_INTERNAL_API_KEY chưa được cấu hình ở backend.");

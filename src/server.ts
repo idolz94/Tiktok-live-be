@@ -1,7 +1,6 @@
 import { createApp } from "./app.js";
 import { assertRequiredEnv, env } from "./config/env.js";
 import logger from "./lib/logger.js";
-import { getRedis } from "./lib/redis.js";
 import { expireOldLicenses } from "./services/license.service.js";
 
 assertRequiredEnv();
@@ -19,17 +18,10 @@ const server = app.listen(env.port, () => {
 async function shutdown(signal: string) {
   logger.info({ signal }, "Graceful shutdown started");
   server.close(async () => {
-    try {
-      const redis = getRedis();
-      if (redis) await redis.quit();
-    } catch {
-      // best-effort
-    }
     logger.info("Shutdown complete");
     process.exit(0);
   });
 
-  // force-kill if drain takes too long
   setTimeout(() => process.exit(1), 15_000).unref();
 }
 

@@ -22,6 +22,20 @@
       "when": 1783135060877,
       "tag": "0002_lowly_steel_serpent",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1783360196402,
+      "tag": "0003_lazy_norman_osborn",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1783361191807,
+      "tag": "0004_stale_senator_kelly",
+      "breakpoints": true
     }
   ]
 }
