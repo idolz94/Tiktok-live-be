@@ -1,14 +1,16 @@
 import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../lib/async-handler.js";
-import { ok } from "../lib/response.js";
-import { requireInternalApiKey } from "../middlewares/internal-api-key.js";
+import { ok, mutateOk } from "../lib/response.js";
+import { requireAuth } from "../middlewares/auth.js";
+import { requireAdmin, requireManager } from "../middlewares/require-role.js";
 import { activateLicenseFromPayment, getCurrentLicense, changeLicenseTier } from "../services/license.service.js";
 import { seedLicensePlans } from "../db/seed-license-plans.js";
+import { changeUserPassword } from "../services/auth.service.js";
 
 const router = Router();
 
-router.use(requireInternalApiKey);
+// ─── License management (manager+) ────────────────────────────────────────────
 
 const activateSchema = z.object({
   shopId: z.string().uuid(),
@@ -20,6 +22,8 @@ const activateSchema = z.object({
 
 router.post(
   "/licenses/activate",
+  requireAuth,
+  requireManager,
   asyncHandler(async (request, response) => {
     const body = activateSchema.parse(request.body || {});
     const license = await activateLicenseFromPayment({
@@ -35,17 +39,11 @@ router.post(
 
 router.get(
   "/licenses/:shopId",
+  requireAuth,
+  requireManager,
   asyncHandler(async (request, response) => {
     const license = await getCurrentLicense(String(request.params.shopId));
     return ok(response, { license });
-  }),
-);
-
-router.post(
-  "/seed-plans",
-  asyncHandler(async (_request, response) => {
-    await seedLicensePlans();
-    return ok(response, { seeded: true });
   }),
 );
 
@@ -55,11 +53,43 @@ const tierSchema = z.object({
 
 router.patch(
   "/licenses/:shopId/tier",
+  requireAuth,
+  requireManager,
   asyncHandler(async (request, response) => {
     const shopId = String(request.params.shopId);
     const body = tierSchema.parse(request.body || {});
     const license = await changeLicenseTier({ shopId, planCode: body.planCode });
     return ok(response, { license });
+  }),
+);
+
+// ─── User management (manager+) ───────────────────────────────────────────────
+
+const changePasswordSchema = z.object({
+  newPassword: z.string().min(6).max(128),
+});
+
+router.patch(
+  "/users/:userId/password",
+  requireAuth,
+  requireManager,
+  asyncHandler(async (request, response) => {
+    const userId = String(request.params.userId);
+    const body = changePasswordSchema.parse(request.body || {});
+    await changeUserPassword(userId, body.newPassword);
+    return mutateOk(response, "Đổi mật khẩu thành công.", null);
+  }),
+);
+
+// ─── Platform management (admin only) ─────────────────────────────────────────
+
+router.post(
+  "/seed-plans",
+  requireAuth,
+  requireAdmin,
+  asyncHandler(async (_request, response) => {
+    await seedLicensePlans();
+    return ok(response, { seeded: true });
   }),
 );
 

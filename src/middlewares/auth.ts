@@ -22,6 +22,7 @@ export function requireAuth(request: Request, _response: Response, next: NextFun
 
     request.authToken = token;
     request.authUserId = payload.sub;
+    request.authUserRole = payload.role ?? "user";
     next();
   } catch (error) {
     next(error);

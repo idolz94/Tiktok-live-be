@@ -23,6 +23,7 @@ import {
   rotateRefreshToken,
   revokeRefreshToken,
   findOrCreateOAuthUser,
+  getUserRole,
 } from "../services/auth.service.js";
 import { bootstrapAccountContext } from "../services/account.service.js";
 import { createTikTokChannel } from "../services/tiktok-channels.service.js";
@@ -106,7 +107,7 @@ router.post(
       });
     }
 
-    const accessToken = signAccessToken(user.id);
+    const accessToken = signAccessToken(user.id, user.role);
     const refreshToken = signRefreshToken(user.id);
     await saveRefreshToken(user.id, refreshToken);
 
@@ -134,7 +135,7 @@ router.post(
     const body = loginSchema.parse(request.body || {});
     const user = await loginUser({ username: body.username, password: body.password });
 
-    const accessToken = signAccessToken(user.id);
+    const accessToken = signAccessToken(user.id, user.role);
     const refreshToken = signRefreshToken(user.id);
     await saveRefreshToken(user.id, refreshToken);
 
@@ -163,7 +164,8 @@ router.post(
     if (!token) throw unauthorized("Refresh token không tồn tại.");
 
     const { userId, newRefreshToken } = await rotateRefreshToken(token);
-    const newAccessToken = signAccessToken(userId);
+    const role = await getUserRole(userId);
+    const newAccessToken = signAccessToken(userId, role);
 
     setTokenCookies(response, newAccessToken, newRefreshToken);
 
@@ -250,7 +252,7 @@ router.get(
     request.authUserId = user.id;
     await bootstrapAccountContext(request);
 
-    const accessToken = signAccessToken(user.id);
+    const accessToken = signAccessToken(user.id, user.role);
     const refreshToken = signRefreshToken(user.id);
     await saveRefreshToken(user.id, refreshToken);
     setTokenCookies(response, accessToken, refreshToken);
@@ -320,7 +322,7 @@ router.get(
     request.authUserId = user.id;
     await bootstrapAccountContext(request);
 
-    const accessToken = signAccessToken(user.id);
+    const accessToken = signAccessToken(user.id, user.role);
     const refreshToken = signRefreshToken(user.id);
     await saveRefreshToken(user.id, refreshToken);
     setTokenCookies(response, accessToken, refreshToken);

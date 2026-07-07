@@ -39,9 +39,6 @@ export const env = {
 
   nodeInternalApiKey: readEnv("NODE_INTERNAL_API_KEY"),
 
-  // Admin user id (UUID) — được phép gọi admin-activate
-  adminUserId: readEnv("ADMIN_USER_ID", ""),
-
   // Mobile app key
   mobileAppKey: readEnv("MOBILE_APP_KEY", "LUMI_APP_REACT_KEY"),
 

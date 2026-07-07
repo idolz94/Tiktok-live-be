@@ -10,8 +10,8 @@ const SALT_ROUNDS = 12;
 
 // ─── Token helpers ────────────────────────────────────────────────────────────
 
-export function signAccessToken(userId: string): string {
-  return jwt.sign({ sub: userId }, env.jwtSecret, {
+export function signAccessToken(userId: string, role: string = "user"): string {
+  return jwt.sign({ sub: userId, role }, env.jwtSecret, {
     expiresIn: env.jwtAccessExpiresIn as jwt.SignOptions["expiresIn"],
   });
 }
@@ -22,12 +22,17 @@ export function signRefreshToken(userId: string): string {
   });
 }
 
-export function verifyAccessToken(token: string): { sub: string } {
+export function verifyAccessToken(token: string): { sub: string; role: string } {
   try {
-    return jwt.verify(token, env.jwtSecret) as { sub: string };
+    return jwt.verify(token, env.jwtSecret) as { sub: string; role: string };
   } catch {
     throw unauthorized("Phiên đăng nhập không hợp lệ.");
   }
+}
+
+export async function getUserRole(userId: string): Promise<string> {
+  const rows = await db.select({ role: users.role }).from(users).where(eq(users.id, userId)).limit(1);
+  return rows[0]?.role ?? "user";
 }
 
 export function verifyRefreshToken(token: string): { sub: string } {
@@ -251,4 +256,9 @@ export async function findOrCreateOAuthUser(input: {
     .onConflictDoNothing();
 
   return user;
+}
+
+export async function changeUserPassword(userId: string, newPassword: string): Promise<void> {
+  const passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+  await db.update(users).set({ passwordHash, updatedAt: new Date() }).where(eq(users.id, userId));
 }

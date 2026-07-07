@@ -2,11 +2,11 @@ import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../lib/async-handler.js";
 import { ok } from "../lib/response.js";
-import { forbidden, notFound } from "../lib/api-error.js";
+import { notFound } from "../lib/api-error.js";
 import { requireAuth } from "../middlewares/auth.js";
+import { requireManager } from "../middlewares/require-role.js";
 import { getAccountContext, requireAccountContext } from "../services/account.service.js";
 import { getCurrentLicense, getLicenseState, activateLicenseFromPayment, findShopByUsername } from "../services/license.service.js";
-import { env } from "../config/env.js";
 
 const router = Router();
 
@@ -41,15 +41,12 @@ const adminActivateSchema = z.object({
   price: z.number().min(0).default(0),
 });
 
-// Admin-only: gia hạn license cho user khác — chỉ cho phép user có id = env.adminUserId
+// Admin-only: gia hạn license cho user khác
 router.post(
   "/admin-activate",
   requireAuth,
+  requireManager,
   asyncHandler(async (request, response) => {
-    if (!env.adminUserId || request.authUserId !== env.adminUserId) {
-      throw forbidden("Không có quyền thực hiện thao tác này.");
-    }
-
     const body = adminActivateSchema.parse(request.body || {});
 
     const input = body.username.trim().toLowerCase();
@@ -72,3 +69,4 @@ router.post(
 );
 
 export default router;
+

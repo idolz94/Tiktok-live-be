@@ -1,6 +1,6 @@
 import { eq, and, inArray, sql, gte, lt } from "drizzle-orm";
 import { db } from "../lib/db.js";
-import { orders, orderItems, orderShipments, customerAddresses } from "../db/schema/index.js";
+import { orders, orderItems, orderShipments, customerAddresses, customers } from "../db/schema/index.js";
 import { badRequest, notFound } from "../lib/api-error.js";
 import { getCommentAvatar, getCommentDisplayName, getCommentText } from "../utils/comment.js";
 import { createOrderCode } from "../utils/id.js";
@@ -75,17 +75,21 @@ async function generateUniqueOrderCode(): Promise<string> {
   throw new Error("Failed to generate unique order code after 10 attempts");
 }
 
-export async function attachProducts<T extends { id: string; customerAddressId?: string | null }>(orderRows: T[]): Promise<(T & { products: (typeof orderItems.$inferSelect)[]; shipment: typeof orderShipments.$inferSelect | null; customerAddressData: typeof customerAddresses.$inferSelect | null })[]> {
-  if (!orderRows.length) return orderRows.map((o) => ({ ...o, products: [], shipment: null, customerAddressData: null }));
+export async function attachProducts<T extends { id: string; customerAddressId?: string | null; customerId?: string | null }>(orderRows: T[]): Promise<(T & { products: (typeof orderItems.$inferSelect)[]; shipment: typeof orderShipments.$inferSelect | null; customerAddressData: typeof customerAddresses.$inferSelect | null; customerType: string | null })[]> {
+  if (!orderRows.length) return orderRows.map((o) => ({ ...o, products: [], shipment: null, customerAddressData: null, customerType: null }));
 
   const orderIds = orderRows.map((o) => o.id);
   const addressIds = [...new Set(orderRows.map((o) => o.customerAddressId).filter(Boolean) as string[])];
+  const customerIds = [...new Set(orderRows.map((o) => o.customerId).filter(Boolean) as string[])];
 
-  const [items, shipmentRows, addressRows] = await Promise.all([
+  const [items, shipmentRows, addressRows, customerRows] = await Promise.all([
     db.select().from(orderItems).where(inArray(orderItems.orderId, orderIds)),
     db.select().from(orderShipments).where(inArray(orderShipments.orderId, orderIds)),
     addressIds.length
       ? db.select().from(customerAddresses).where(inArray(customerAddresses.id, addressIds))
+      : Promise.resolve([]),
+    customerIds.length
+      ? db.select({ id: customers.id, customerType: customers.customerType }).from(customers).where(inArray(customers.id, customerIds))
       : Promise.resolve([]),
   ]);
 
@@ -106,11 +110,17 @@ export async function attachProducts<T extends { id: string; customerAddressId?:
     addressById.set(a.id, a);
   }
 
+  const customerTypeById = new Map<string, string | null>();
+  for (const c of customerRows) {
+    customerTypeById.set(c.id, c.customerType ?? null);
+  }
+
   return orderRows.map((o) => ({
     ...o,
     products: byOrderId.get(o.id) ?? [],
     shipment: shipmentByOrderId.get(o.id) ?? null,
     customerAddressData: o.customerAddressId ? (addressById.get(o.customerAddressId) ?? null) : null,
+    customerType: o.customerId ? (customerTypeById.get(o.customerId) ?? null) : null,
   }));
 }
 
