@@ -24,6 +24,8 @@ export const users = pgTable("users", {
   avatarUrl: text("avatar_url"),
   role: text("role").notNull().default("user"), // user | admin | manager
   status: text("status").notNull().default("active"),
+  spxUserId: bigint("spx_user_id", { mode: "number" }),
+  spxUserSecret: text("spx_user_secret"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

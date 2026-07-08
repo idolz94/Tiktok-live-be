@@ -5,6 +5,7 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: ["src/**/*.test.ts"],
+    setupFiles: ["src/tests/setup.ts"],
   },
   resolve: {
     // Allow imports with .js extension to resolve .ts files (NodeNext pattern)

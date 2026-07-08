@@ -5,7 +5,7 @@ import { badRequest, notFound } from "../lib/api-error.js";
 import { getCommentAvatar, getCommentDisplayName, getCommentText } from "../utils/comment.js";
 import { createOrderCode } from "../utils/id.js";
 import { getCommentTikTokUsername } from "../utils/tiktok.js";
-import { findOrCreateCustomer, updateCustomerAfterOrder } from "./customer.service.js";
+import { findOrCreateCustomer, updateCustomerAfterOrder, decrementCustomerAfterOrderDelete } from "./customer.service.js";
 import { findDbLiveCommentId, updateLiveCommentOrder } from "./live-comments.service.js";
 import { updateLiveSessionOrderCount } from "./live-sessions.service.js";
 import { matchPresetByComment } from "./product-presets.service.js";
@@ -406,8 +406,123 @@ export async function updateOrder({
   return updated;
 }
 
+export type StatChartPoint = { date: string; value: number };
+export type StatSection = { total: number; avg: number; max: number; chart: StatChartPoint[] };
+export type OrderStatsResult = {
+  revenue: StatSection;
+  orders: StatSection;
+  products: StatSection;
+  customers: StatSection;
+  prev: { revenue: number; orders: number; products: number; customers: number };
+};
+
+export async function getOrderStats({
+  shopId,
+  dateFrom,
+  dateTo,
+  depositStatus,
+  status,
+}: {
+  shopId: string;
+  dateFrom: Date;
+  dateTo: Date;
+  depositStatus?: string;
+  status?: string;
+}): Promise<OrderStatsResult> {
+  const periodMs = dateTo.getTime() - dateFrom.getTime();
+  const prevFrom = new Date(dateFrom.getTime() - periodMs);
+  const prevTo = dateFrom;
+
+  const orderWhere = (from: Date, to: Date) =>
+    and(
+      eq(orders.shopId, shopId),
+      gte(orders.createdAt, from),
+      lt(orders.createdAt, to),
+      depositStatus ? eq(orders.depositStatus, depositStatus) : undefined,
+      status ? eq(orders.status, status) : undefined,
+    );
+
+  const [revenueRows, productRows, customerRows, prevRevRow, prevProdRow, prevCustRow] =
+    await Promise.all([
+      db
+        .select({
+          date: sql<string>`date_trunc('day', ${orders.createdAt})::date::text`,
+          revenue: sql<number>`coalesce(sum(${orders.totalAmount}), 0)::int`,
+          orderCount: sql<number>`count(*)::int`,
+        })
+        .from(orders)
+        .where(orderWhere(dateFrom, dateTo))
+        .groupBy(sql`date_trunc('day', ${orders.createdAt})`)
+        .orderBy(sql`date_trunc('day', ${orders.createdAt})`),
+
+      db
+        .select({
+          date: sql<string>`date_trunc('day', ${orders.createdAt})::date::text`,
+          products: sql<number>`coalesce(sum(${orderItems.quantity}), 0)::int`,
+        })
+        .from(orders)
+        .innerJoin(orderItems, eq(orderItems.orderId, orders.id))
+        .where(orderWhere(dateFrom, dateTo))
+        .groupBy(sql`date_trunc('day', ${orders.createdAt})`)
+        .orderBy(sql`date_trunc('day', ${orders.createdAt})`),
+
+      db
+        .select({
+          date: sql<string>`date_trunc('day', ${customers.createdAt})::date::text`,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(customers)
+        .where(and(eq(customers.shopId, shopId), gte(customers.createdAt, dateFrom), lt(customers.createdAt, dateTo)))
+        .groupBy(sql`date_trunc('day', ${customers.createdAt})`)
+        .orderBy(sql`date_trunc('day', ${customers.createdAt})`),
+
+      db
+        .select({
+          revenue: sql<number>`coalesce(sum(${orders.totalAmount}), 0)::int`,
+          orderCount: sql<number>`count(*)::int`,
+        })
+        .from(orders)
+        .where(orderWhere(prevFrom, prevTo)),
+
+      db
+        .select({ products: sql<number>`coalesce(sum(${orderItems.quantity}), 0)::int` })
+        .from(orders)
+        .innerJoin(orderItems, eq(orderItems.orderId, orders.id))
+        .where(orderWhere(prevFrom, prevTo)),
+
+      db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(customers)
+        .where(and(eq(customers.shopId, shopId), gte(customers.createdAt, prevFrom), lt(customers.createdAt, prevTo))),
+    ]);
+
+  function toSection(chart: StatChartPoint[]): StatSection {
+    const total = chart.reduce((s, r) => s + r.value, 0);
+    const avg = chart.length ? Math.round(total / chart.length) : 0;
+    const max = chart.length ? Math.max(...chart.map((r) => r.value)) : 0;
+    return { total, avg, max, chart };
+  }
+
+  return {
+    revenue: toSection(revenueRows.map((r) => ({ date: r.date, value: r.revenue }))),
+    orders: toSection(revenueRows.map((r) => ({ date: r.date, value: r.orderCount }))),
+    products: toSection(productRows.map((r) => ({ date: r.date, value: r.products }))),
+    customers: toSection(customerRows.map((r) => ({ date: r.date, value: r.count }))),
+    prev: {
+      revenue: prevRevRow[0]?.revenue ?? 0,
+      orders: prevRevRow[0]?.orderCount ?? 0,
+      products: prevProdRow[0]?.products ?? 0,
+      customers: prevCustRow[0]?.count ?? 0,
+    },
+  };
+}
+
 export async function deleteOrder({ shopId, orderId }: { shopId: string; orderId: string }) {
-  await assertOrderInShop(orderId, shopId);
+  const order = await assertOrderInShop(orderId, shopId);
   await db.delete(orders).where(and(eq(orders.id, orderId), eq(orders.shopId, shopId)));
+  await decrementCustomerAfterOrderDelete({
+    customerId: order.customerId,
+    totalAmount: order.totalAmount ?? 0,
+  });
   return { ok: true };
 }

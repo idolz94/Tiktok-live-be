@@ -314,7 +314,7 @@ export async function createSpxShipment(params: CreateSpxShipmentParams) {
     .where(eq(orderItems.orderId, params.orderId));
   const subtotalAmount = items.reduce((sum, item) => sum + toMoney(item.price) * (item.quantity ?? 1), 0);
   const amounts = reconcileOrderAmounts({ ...order, subtotalAmount });
-  await db.update(orders).set({ ...amounts, updatedAt: new Date() }).where(and(eq(orders.id, params.orderId), eq(orders.shopId, params.shopId)));
+  await db.update(orders).set({ ...amounts, customerAddressId: addrId, updatedAt: new Date() }).where(and(eq(orders.id, params.orderId), eq(orders.shopId, params.shopId)));
 
   const submitParams = {
     shopId: params.shopId,

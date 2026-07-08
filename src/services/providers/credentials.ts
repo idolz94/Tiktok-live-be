@@ -1,6 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "../../lib/db.js";
-import { shopShippingProviders } from "../../db/schema/index.js";
+import { shops, users } from "../../db/schema/index.js";
 import { env } from "../../config/env.js";
 import { ApiError } from "../../lib/api-error.js";
 
@@ -12,31 +12,23 @@ export type SpxCredentials = {
 
 export async function getSpxCredentials(shopId: string): Promise<SpxCredentials> {
   const rows = await db
-    .select()
-    .from(shopShippingProviders)
-    .where(
-      and(
-        eq(shopShippingProviders.shopId, shopId),
-        eq(shopShippingProviders.providerCode, "spx"),
-        eq(shopShippingProviders.isEnabled, true),
-      ),
-    )
+    .select({
+      spxUserId: users.spxUserId,
+      spxUserSecret: users.spxUserSecret,
+    })
+    .from(shops)
+    .innerJoin(users, eq(shops.ownerId, users.id))
+    .where(eq(shops.id, shopId))
     .limit(1);
 
   const row = rows[0];
-
-  const userId = row
-    ? Number((row.extraConfig as Record<string, unknown> | null)?.spx_user_id)
-    : Number(env.spxUserId);
-  const userSecret = row
-    ? String((row.extraConfig as Record<string, unknown> | null)?.spx_user_secret ?? "")
-    : (env.spxUserSecret ?? "");
-  const environment = row?.environment ?? (env.spxApiBase?.includes("test") ? "sandbox" : "production");
+  const userId = row?.spxUserId ? Number(row.spxUserId) : undefined;
+  const userSecret = row?.spxUserSecret ?? undefined;
 
   if (!userId || !userSecret) {
-    throw new ApiError(400, "Shop chưa cấu hình SPX hoặc SPX chưa được bật.", "SPX_NOT_CONFIGURED");
+    throw new ApiError(400, "Shop chưa kết nối tài khoản SPX. Vào Cấu hình vận chuyển để kết nối.", "SPX_NOT_CONFIGURED");
   }
 
+  const environment = env.spxApiBase?.includes("test") ? "sandbox" : "production";
   return { userId, userSecret, environment };
 }
-

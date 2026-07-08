@@ -137,25 +137,30 @@ export async function matchPresetByComment(
     return preset;
   }
 
-  // Pass 3: no name — match by code + color
+  // Pass 3: match by code + color (any preset with a code, regardless of name)
   for (const preset of presets) {
-    const name = (preset.name ?? "").trim();
     const code = preset.code.trim().toLowerCase();
     const color = (preset.color ?? "").trim().toLowerCase();
-    if (name) continue;
     if (!code) continue;
     const escapedCode = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const codeMatch = new RegExp(`(?:^|\\s|[#%])${escapedCode}(?:$|\\s|[^a-z0-9])`, "i").test(text);
+    const codeMatch =
+      text === code ||
+      text.includes(code) ||
+      new RegExp(`(?:^|\\s|[#%])${escapedCode}(?:$|\\s|[^a-z0-9])`, "i").test(text);
     if (codeMatch && color && matchesKeyword(color)) return preset;
   }
 
-  // Pass 4: no name — match by code only
+  // Pass 4: match by code only (any preset with a code, regardless of name)
   for (const preset of presets) {
-    const name = (preset.name ?? "").trim();
     const code = preset.code.trim().toLowerCase();
-    if (name || !code) continue;
+    if (!code) continue;
     const escapedCode = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    if (new RegExp(`(?:^|\\s|[#%])${escapedCode}(?:$|\\s|[^a-z0-9])`, "i").test(text)) return preset;
+    if (
+      text === code ||
+      text.includes(code) ||
+      new RegExp(`(?:^|\\s|[#%])${escapedCode}(?:$|\\s|[^a-z0-9])`, "i").test(text)
+    )
+      return preset;
   }
 
   return null;

@@ -1,6 +1,6 @@
 import { eq, and } from "drizzle-orm";
 import { db } from "../lib/db.js";
-import { customers } from "../db/schema/index.js";
+import { customers, orders } from "../db/schema/index.js";
 import { notFound } from "../lib/api-error.js";
 
 export async function findOrCreateCustomer({
@@ -45,6 +45,7 @@ export async function findOrCreateCustomer({
       tiktokUniqueId: normalizedUsername.replace(/^@/, ""),
       displayName,
       avatarUrl,
+      customerType: "Lẻ",
       totalOrders: 0,
       totalSpent: 0,
       tags: [],
@@ -97,6 +98,43 @@ export async function updateCustomerAfterOrder({
       lastOrderAt: new Date(),
       updatedAt: new Date(),
     })
+    .where(eq(customers.id, customerId));
+}
+
+export async function decrementCustomerAfterOrderDelete({
+  customerId,
+  totalAmount,
+}: {
+  customerId?: string | null;
+  totalAmount: number;
+}) {
+  if (!customerId) return;
+
+  const rows = await db
+    .select({ id: customers.id, totalOrders: customers.totalOrders, totalSpent: customers.totalSpent })
+    .from(customers)
+    .where(eq(customers.id, customerId))
+    .limit(1);
+
+  const customer = rows[0];
+  if (!customer) return;
+
+  const newTotalOrders = Math.max(0, (customer.totalOrders ?? 0) - 1);
+  const newTotalSpent = Math.max(0, (customer.totalSpent ?? 0) - totalAmount);
+
+  if (newTotalOrders === 0) {
+    // null out FK trên orders trước để tránh FK violation khi xóa
+    await db
+      .update(orders)
+      .set({ customerId: null })
+      .where(eq(orders.customerId, customerId));
+    await db.delete(customers).where(eq(customers.id, customerId));
+    return;
+  }
+
+  await db
+    .update(customers)
+    .set({ totalOrders: newTotalOrders, totalSpent: newTotalSpent, updatedAt: new Date() })
     .where(eq(customers.id, customerId));
 }
 

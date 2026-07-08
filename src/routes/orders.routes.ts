@@ -17,6 +17,7 @@ import {
   listSpxVouchers,
   refreshShippingStatus,
   listOrders,
+  getOrderStats,
   removeOrderItem,
   submitManualShipping,
   updateOrder,
@@ -103,6 +104,29 @@ const cancelShippingSchema = z.object({
 });
 
 router.use(requireAuth);
+
+router.get(
+  "/stats",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const { dateFrom, dateTo, depositStatus, status } = z
+      .object({
+        dateFrom: z.string().datetime(),
+        dateTo: z.string().datetime(),
+        depositStatus: z.string().optional(),
+        status: z.string().optional(),
+      })
+      .parse(request.query);
+    const data = await getOrderStats({
+      shopId: context.shop.id,
+      dateFrom: new Date(dateFrom),
+      dateTo: new Date(dateTo),
+      depositStatus,
+      status,
+    });
+    return ok(response, data);
+  }),
+);
 
 router.get(
   "/spx/vouchers",

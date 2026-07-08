@@ -76,18 +76,16 @@ export async function bootstrapAccountContext(request: Request): Promise<Account
 
   // Auto-provision shop + membership if missing
   if (!shopMember?.shopId && user) {
-    await db.transaction(async (tx) => {
-      const [newShop] = await tx
-        .insert(shops)
-        .values({ ownerId: userId, name: "Shop mới" })
-        .returning();
+    const [newShop] = await db
+      .insert(shops)
+      .values({ ownerId: userId, name: "Shop mới" })
+      .returning();
 
-      await tx
-        .insert(shopMembers)
-        .values({ shopId: newShop.id, userId, role: "owner", status: "active" });
+    await db
+      .insert(shopMembers)
+      .values({ shopId: newShop.id, userId, role: "owner", status: "active" });
 
-      await createTrialLicense(newShop.id, tx);
-    });
+    await createTrialLicense(newShop.id);
     return getAccountContext(request);
   }
 
