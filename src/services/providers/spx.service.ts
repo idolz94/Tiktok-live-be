@@ -72,7 +72,11 @@ async function spxPost(path: string, environment: string, body: unknown): Promis
     logger.debug({ response: data }, "[SPX response]");
   }
 
-  if (data.ret_code !== 0) throwSpxError(data);
+  if (data.ret_code !== 0) {
+    // ponytail: always surface SPX errors even for suppressed debug paths
+    logger.warn({ path, ret_code: data.ret_code, message: data.message }, "[SPX error]");
+    throwSpxError(data);
+  }
   return data.data;
 }
 
@@ -451,7 +455,16 @@ export async function spxGetTimeslots(params: {
   serviceType?: number;
 }): Promise<SpxTimeslot[]> {
   const body = { user_id: params.userId, user_secret: params.userSecret, service_type: params.serviceType ?? 1 };
-  const data = await spxPost("/open/api/v1/order/get_pickup_time", params.environment, body) as Array<Record<string, unknown>>;
+
+  let data: Array<Record<string, unknown>>;
+  try {
+    data = await spxPost("/open/api/v1/order/get_pickup_time", params.environment, body) as Array<Record<string, unknown>>;
+  } catch (err) {
+    const details = (err as ApiError).details as { errorCode?: number } | undefined;
+    // ponytail: 13301 = feature unavailable on sandbox/this account; return empty instead of 422
+    if (details?.errorCode === 13301) return [];
+    throw err;
+  }
 
   if (!Array.isArray(data)) return [];
   return data.map((d) => ({

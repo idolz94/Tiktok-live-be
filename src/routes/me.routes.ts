@@ -131,5 +131,18 @@ router.post(
   }),
 );
 
+// DELETE /api/me/spx/account
+router.delete(
+  "/spx/account",
+  requireAuth,
+  asyncHandler(async (request, response) => {
+    const userId = request.authUserId!;
+    await db.update(users)
+      .set({ spxUserId: null, spxUserSecret: null })
+      .where(eq(users.id, userId));
+    return mutateOk(response, "Đã ngắt kết nối tài khoản SPX.");
+  }),
+);
+
 export default router;
 

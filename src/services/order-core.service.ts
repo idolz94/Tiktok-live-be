@@ -40,7 +40,11 @@ export function reconcileOrderAmounts(order: {
 export async function updateOrderAmounts(orderId: string, shopId: string) {
   const [order] = await db.select().from(orders).where(and(eq(orders.id, orderId), eq(orders.shopId, shopId))).limit(1);
   if (!order) throw notFound("Không tìm thấy đơn hàng.");
-  const amounts = reconcileOrderAmounts(order);
+  // START: Tính lại subtotalAmount từ orderItems thực tế, không dùng giá trị snapshot cũ trên orders
+  const items = await db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
+  const subtotalAmount = items.reduce((sum, item) => sum + toMoney(item.price) * toMoney(item.quantity), 0);
+  const amounts = reconcileOrderAmounts({ ...order, subtotalAmount });
+  // END: subtotalAmount từ items
   await db.update(orders).set({ ...amounts, updatedAt: new Date() }).where(and(eq(orders.id, orderId), eq(orders.shopId, shopId)));
 }
 

@@ -49,8 +49,6 @@ export const env = {
   spxAppId: readEnv("SPX_APP_ID"),
   spxAppSecret: readEnv("SPX_APP_SECRET"),
   spxApiBase: readEnv("SPX_API_BASE", "https://test-stable.spx.vn"),
-  spxUserId: readEnv("SPX_USER_ID"),
-  spxUserSecret: readEnv("SPX_USER_SECRET"),
 };
 
 export function assertRequiredEnv() {
