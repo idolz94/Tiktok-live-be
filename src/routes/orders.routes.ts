@@ -17,6 +17,7 @@ import {
   listSpxVouchers,
   refreshShippingStatus,
   listOrders,
+  getOrderById,
   getOrderStats,
   removeOrderItem,
   submitManualShipping,
@@ -157,6 +158,15 @@ router.get(
     const offset = request.query.offset ? Number(request.query.offset) : 0;
     const orders = await listOrders(context.shop.id, shippingStatus, status, limit, offset);
     return ok(response, { orders });
+  }),
+);
+
+router.get(
+  "/:orderId",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const order = await getOrderById(String(request.params.orderId), context.shop.id);
+    return ok(response, { order });
   }),
 );
 

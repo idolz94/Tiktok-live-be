@@ -140,6 +140,17 @@ export async function assertOrderInShop(orderId: string, shopId: string) {
   return row;
 }
 
+export async function getOrderById(orderId: string, shopId: string) {
+  const rows = await db
+    .select()
+    .from(orders)
+    .where(and(eq(orders.id, orderId), eq(orders.shopId, shopId)))
+    .limit(1);
+  if (!rows[0]) throw notFound("Không tìm thấy đơn hàng.");
+  const [result] = await attachProducts(rows);
+  return result;
+}
+
 export async function listOrders(shopId: string, shippingStatus?: string, status?: string, limit = 100, offset = 0) {
   const condition = and(
     eq(orders.shopId, shopId),
