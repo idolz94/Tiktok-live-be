@@ -5,8 +5,10 @@ import { ok, mutateOk } from "../lib/response.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { requireShopId } from "../services/account.service.js";
 import {
+  getInvoiceContent,
   getPrinterSettings,
   getProductDefaults,
+  upsertInvoiceContent,
   upsertPrinterSettings,
   upsertProductDefaults,
 } from "../services/shop-settings.service.js";
@@ -69,6 +71,35 @@ router.patch(
     const body = patchPrinterSettingsSchema.parse(request.body || {});
     const data = await upsertPrinterSettings(shopId, body);
     return mutateOk(response, "Lưu cài đặt máy in thành công.", data);
+  }),
+);
+
+const patchInvoiceContentSchema = z.object({
+  companyName: z.string().optional(),
+  companyAddress: z.string().optional(),
+  recordNumb: z.number().int().min(0).optional(),
+});
+
+// GET /api/me/shop-settings/invoice-content
+router.get(
+  "/invoice-content",
+  requireAuth,
+  asyncHandler(async (request, response) => {
+    const shopId = await requireShopId(request);
+    const data = await getInvoiceContent(shopId);
+    return ok(response, data);
+  }),
+);
+
+// PATCH /api/me/shop-settings/invoice-content
+router.patch(
+  "/invoice-content",
+  requireAuth,
+  asyncHandler(async (request, response) => {
+    const shopId = await requireShopId(request);
+    const body = patchInvoiceContentSchema.parse(request.body || {});
+    const data = await upsertInvoiceContent(shopId, body);
+    return mutateOk(response, "Lưu nội dung hóa đơn thành công.", data);
   }),
 );
 

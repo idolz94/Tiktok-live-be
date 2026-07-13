@@ -49,6 +49,10 @@ export const env = {
   spxAppId: readEnv("SPX_APP_ID"),
   spxAppSecret: readEnv("SPX_APP_SECRET"),
   spxApiBase: readEnv("SPX_API_BASE", "https://test-stable.spx.vn"),
+
+  // EulerStream
+  eulerApiKey: readEnv("EULER_API_KEY"),
+  eulerApiBase: readEnv("EULER_API_BASE", "https://tiktok.eulerstream.com"),
 };
 
 export function assertRequiredEnv() {
@@ -57,6 +61,7 @@ export function assertRequiredEnv() {
     ["JWT_SECRET", env.jwtSecret],
     ["JWT_REFRESH_SECRET", env.jwtRefreshSecret],
     ["NODE_INTERNAL_API_KEY", env.nodeInternalApiKey],
+    ["EULER_API_KEY", env.eulerApiKey],
   ].filter(([, value]) => !value);
 
   if (missing.length > 0) {

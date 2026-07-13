@@ -2,9 +2,8 @@ import { eq, and, desc } from "drizzle-orm";
 import { db } from "../lib/db.js";
 import { tiktokChannels, shops } from "../db/schema/index.js";
 import { badRequest, notFound } from "../lib/api-error.js";
+import { env } from "../config/env.js";
 import { normalizeAtUsername } from "../utils/tiktok.js";
-// @ts-ignore — tiktok-live-connector ships ESM without declaration files
-import { TikTokLiveConnection } from "tiktok-live-connector";
 
 interface TikTokProfile {
   displayName: string | null;
@@ -12,26 +11,32 @@ interface TikTokProfile {
   followerCount: number | null;
 }
 
-export async function fetchTikTokProfile(username: string): Promise<TikTokProfile> {
+type EulerBasicUser = {
+  nickname?: string | null;
+  avatar_thumb?: string[] | null;
+  avatar_medium?: string[] | null;
+  avatar_larger?: string[] | null;
+};
+
+async function fetchTikTokProfile(username: string): Promise<TikTokProfile> {
   try {
-    // @ts-ignore
-    const connection = new TikTokLiveConnection(username);
-    const roomInfo = await connection.fetchRoomInfo();
-    const owner = roomInfo?.data?.owner ?? roomInfo?.data?.user ?? null;
-    if (!owner) return { displayName: null, avatarUrl: null, followerCount: null };
+    const url = `${env.eulerApiBase}/tiktok/users/${encodeURIComponent(username)}/basic`;
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${env.eulerApiKey}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return { displayName: null, avatarUrl: null, followerCount: null };
 
-    const displayName: string | null = owner.nickname ?? null;
-    const avatarUrl: string | null =
-      owner.avatarThumb?.urlList?.[0] ?? owner.avatarThumb?.url ?? null;
-    const rawCount = owner.followInfo?.followerCount;
-    const followerCount: number | null =
-      typeof rawCount === "number"
-        ? rawCount
-        : typeof rawCount === "string"
-        ? parseInt(rawCount, 10) || null
-        : null;
+    const json = await res.json() as { code?: number; user?: EulerBasicUser };
+    const user = json.code === 200 ? json.user : null;
+    if (!user) return { displayName: null, avatarUrl: null, followerCount: null };
 
-    return { displayName, avatarUrl, followerCount };
+    return {
+      displayName: user.nickname ?? null,
+      avatarUrl: user.avatar_thumb?.[0] ?? user.avatar_medium?.[0] ?? user.avatar_larger?.[0] ?? null,
+      // ponytail: Euler full profile with follower count requires Business plan; roomInfo backfills later when live connects.
+      followerCount: null,
+    };
   } catch {
     return { displayName: null, avatarUrl: null, followerCount: null };
   }
@@ -146,10 +151,16 @@ export async function updateTikTokChannel({
 }) {
   const patch: Record<string, unknown> = { updatedAt: new Date() };
 
+  let newUsername: string | undefined;
+
   if (typeof tiktokUsername === "string") {
     const normalizedUsername = normalizeAtUsername(tiktokUsername);
     if (!normalizedUsername) throw badRequest("Thiếu TikTok username.");
     patch.tiktokUsername = normalizedUsername;
+    newUsername = normalizedUsername;
+    // ponytail: clear stale profile so GET list backfills fresh data after background fetch.
+    patch.avatarUrl = null;
+    if (typeof displayName !== "string") patch.displayName = null;
   }
 
   if (typeof displayName === "string") patch.displayName = displayName || null;
@@ -169,6 +180,21 @@ export async function updateTikTokChannel({
 
   if (updated.isDefault) {
     await updateShopDefaultTikTokUsername(shopId, updated.tiktokUsername);
+  }
+
+  // When username changes, refresh profile in background (avatar + displayName if not explicitly set).
+  if (newUsername) {
+    fetchTikTokProfile(newUsername).then((profile) => {
+      const profilePatch: { displayName?: string | null; avatarUrl?: string | null } = {};
+      // Only override displayName from Euler if caller didn't supply one explicitly.
+      if (typeof displayName !== "string" && profile.displayName) {
+        profilePatch.displayName = profile.displayName;
+      }
+      if (profile.avatarUrl) profilePatch.avatarUrl = profile.avatarUrl;
+      if (Object.keys(profilePatch).length > 0) {
+        updateTikTokChannelProfile(shopId, newUsername!, profilePatch).catch(() => {});
+      }
+    }).catch(() => {});
   }
 
   return updated;

@@ -1,9 +1,14 @@
 import { randomUUID } from "crypto";
-// @ts-ignore — tiktok-live-connector ships ESM without declaration files
-import { TikTokLiveConnection, WebcastEvent, ControlEvent } from "tiktok-live-connector";
+import {
+  ClientCloseCode,
+  type ClientMessageBundle,
+  type DecodedData,
+  createWebSocketUrl,
+} from "@eulerstream/euler-websocket-sdk";
 import { broadcastSseToShop } from "../lib/sse-hub.js";
 import { enqueueLiveEvent } from "../lib/queues.js";
 import logger from "../lib/logger.js";
+import { env } from "../config/env.js";
 import {
   ensureCollectorLiveSession,
   findShopOwnerUserId,
@@ -21,7 +26,9 @@ type RoomState = {
   liveSessionId: string | null;
   collectorSessionId: string;
   roomId: string | null;
-  connection: any;
+  connection: WebSocket | null;
+  reconnectTimer: NodeJS.Timeout | null;
+  hasEmittedConnected: boolean;
   isConnecting: boolean;
   isRunning: boolean;
   isStopping: boolean;
@@ -208,7 +215,7 @@ async function onDisconnected(room: RoomState) {
   await enqueueLiveEvent("collector-live-disconnected", payload);
 
   try {
-    room.connection?.disconnect?.();
+    room.connection?.close?.();
   } catch {
     // ignore disconnect errors
   }
@@ -254,7 +261,7 @@ async function onError(room: RoomState, message: string) {
   await enqueueLiveEvent("collector-live-error", payload);
 
   try {
-    room.connection?.disconnect?.();
+    room.connection?.close?.();
   } catch {
     // ignore disconnect errors
   }
@@ -343,87 +350,153 @@ async function onUserJoined(room: RoomState, data: any) {
 
 // ─── Room lifecycle ───────────────────────────────────────────────────────────
 
-async function connectRoom(room: RoomState) {
-  const connection = new TikTokLiveConnection(room.username);
-  room.connection = connection;
+function isBundle(message: DecodedData | ClientMessageBundle): message is ClientMessageBundle {
+  return Array.isArray((message as ClientMessageBundle).messages);
+}
 
-  connection.on(ControlEvent.DISCONNECTED, () => {
-    logger.debug({ username: room.username }, "[TIKTOK] disconnected");
-    room.isRunning = false;
-    onDisconnected(room).catch((e) =>
-      logger.error({ err: e?.message }, "[TIKTOK] onDisconnected error"),
-    );
-    rooms.delete(room.username);
-  });
+function parseEulerFrame(raw: string): DecodedData[] {
+  const parsed = JSON.parse(raw) as DecodedData | ClientMessageBundle;
+  return isBundle(parsed) ? parsed.messages : [parsed];
+}
 
-  connection.on(ControlEvent.ERROR, (err: any) => {
-    const message =
-      err?.message ||
-      (typeof err === "object" ? JSON.stringify(err) : String(err));
-    logger.error({ username: room.username, isRunning: room.isRunning, isConnecting: room.isConnecting, err: message }, "[TIKTOK] error");
-
-    // Non-fatal if already running OR still in the process of connecting
-    // (tiktok-live-connector can emit ERROR for transient issues during handshake)
-    if (room.isRunning || room.isConnecting) {
-      logger.warn({ username: room.username, isRunning: room.isRunning, isConnecting: room.isConnecting }, "[TIKTOK] non-fatal error — ignoring");
-      room.lastError = message;
-      return;
-    }
-
-    room.lastError = message;
-    room.isRunning = false;
-    onError(room, message).catch((e) =>
-      logger.error({ err: e?.message }, "[TIKTOK] onError handler error"),
-    );
-    rooms.delete(room.username);
-  });
-
-  connection.on(WebcastEvent.CHAT, (data: any) => {
-    room.commentCount += 1;
-    room.lastCommentAt = nowIso();
-    ingestComment(room, data).catch((e) =>
-      logger.error({ err: e?.message }, "[TIKTOK] ingestComment error"),
-    );
-  });
-
-  connection.on(WebcastEvent.ROOM_USER, (data: any) => {
-    const viewersCount =
-      typeof data.viewerCount === "number" ? data.viewerCount : 0;
-    onViewerCount(room, viewersCount).catch(() => {});
-  });
-
-  connection.on(WebcastEvent.MEMBER, (data: any) => {
-    onUserJoined(room, data).catch(() => {});
-  });
-
-  logger.debug({ username: room.username, roomId: room.roomId }, "[TIKTOK] calling connect");
-  const state = await connection.connect();
-  room.roomId = state?.roomId || null;
+function emitConnectedOnce(room: RoomState, roomId: string | null) {
+  if (room.hasEmittedConnected) return;
+  room.hasEmittedConnected = true;
+  room.roomId = roomId;
   room.isRunning = true;
   room.isConnecting = false;
-  logger.debug({ username: room.username, roomId: room.roomId }, "[TIKTOK] connected");
+  onConnected(room, roomId).catch((e) =>
+    logger.error({ err: e?.message }, "[TIKTOK] onConnected error"),
+  );
+}
 
-  // Capture profile from roomInfo — only available when user is live
-  if (room.shopId) {
-    const roomInfo = state?.roomInfo ?? connection.roomInfo;
-    const owner = roomInfo?.data?.owner ?? roomInfo?.data?.user;
-    if (owner) {
-      const displayName: string | null = owner.nickname ?? null;
-      const avatarUrl: string | null =
-        owner.avatarThumb?.urlList?.[0] ?? owner.avatarThumb?.url ?? null;
-      const followerCount: number | null =
-        typeof owner.followInfo?.followerCount === "number"
-          ? owner.followInfo.followerCount
-          : typeof owner.followInfo?.followerCount === "string"
-          ? parseInt(owner.followInfo.followerCount, 10) || null
-          : null;
-      updateTikTokChannelProfile(room.shopId, room.username, { displayName, avatarUrl, followerCount }).catch(
-        (e) => logger.warn({ err: e?.message }, "[TIKTOK] updateTikTokChannelProfile failed"),
+function updateProfileFromRoomInfo(room: RoomState, roomInfo: any) {
+  if (!room.shopId) return;
+  const owner = roomInfo?.data?.owner ?? roomInfo?.data?.user ?? roomInfo?.owner ?? roomInfo?.user;
+  if (!owner) return;
+
+  const displayName: string | null = owner.nickname ?? null;
+  const avatarUrl: string | null = owner.avatarThumb?.urlList?.[0] ?? owner.avatarThumb?.url ?? null;
+  const followerCount: number | null =
+    typeof owner.followInfo?.followerCount === "number"
+      ? owner.followInfo.followerCount
+      : typeof owner.followInfo?.followerCount === "string"
+        ? parseInt(owner.followInfo.followerCount, 10) || null
+        : null;
+
+  updateTikTokChannelProfile(room.shopId, room.username, { displayName, avatarUrl, followerCount }).catch(
+    (e) => logger.warn({ err: e?.message }, "[TIKTOK] updateTikTokChannelProfile failed"),
+  );
+}
+
+function handleEulerEvent(room: RoomState, event: DecodedData) {
+  switch (event.type) {
+    case "tiktok.connect":
+      emitConnectedOnce(room, room.roomId);
+      break;
+    case "roomInfo":
+      updateProfileFromRoomInfo(room, event);
+      break;
+    case "WebcastChatMessage":
+      room.commentCount += 1;
+      room.lastCommentAt = nowIso();
+      ingestComment(room, event.data).catch((e) =>
+        logger.error({ err: e?.message }, "[TIKTOK] ingestComment error"),
       );
+      break;
+    case "WebcastMemberMessage":
+      onUserJoined(room, event.data).catch(() => {});
+      break;
+    case "WebcastRoomUserSeqMessage": {
+      const data = event.data as any;
+      const viewersCount = typeof data.viewerCount === "number" ? data.viewerCount : 0;
+      onViewerCount(room, viewersCount).catch(() => {});
+      break;
     }
   }
+}
 
-  await onConnected(room, room.roomId);
+function shouldReconnect(code: number) {
+  return [
+    ClientCloseCode.NO_MESSAGES_TIMEOUT,
+    ClientCloseCode.TIKTOK_CLOSED_CONNECTION,
+    ClientCloseCode.INTERNAL_SERVER_ERROR,
+    ClientCloseCode.MAX_LIFETIME_EXCEEDED,
+    ClientCloseCode.WEBCAST_FETCH_ERROR, // transient TikTok API timeout — retry
+  ].includes(code);
+}
+
+function reconnectRoom(room: RoomState) {
+  if (room.isStopping || !rooms.has(room.username)) return;
+  room.reconnectTimer = setTimeout(() => {
+    room.reconnectTimer = null;
+    connectRoom(room).catch((e) => logger.error({ err: e?.message }, "[TIKTOK] reconnect failed"));
+  }, 3000);
+}
+
+async function handleEulerClose(room: RoomState, code: number, reason: string) {
+  logger.debug({ username: room.username, code, reason }, "[TIKTOK] websocket closed");
+  room.connection = null;
+
+  if (room.isStopping) return;
+  if (shouldReconnect(code)) {
+    room.isConnecting = true;
+    reconnectRoom(room);
+    return;
+  }
+
+  room.isRunning = false;
+  room.isConnecting = false;
+
+  if (!room.hasEmittedConnected && code === ClientCloseCode.NOT_LIVE) {
+    rooms.delete(room.username);
+    throw new Error("TikTok chưa bật live");
+  }
+
+  if (code === ClientCloseCode.NOT_LIVE || code === ClientCloseCode.STREAM_END) {
+    await onDisconnected(room);
+  } else {
+    await onError(room, reason || `Euler closed with code ${code}`);
+  }
+  rooms.delete(room.username);
+}
+
+async function connectRoom(room: RoomState) {
+  const url = createWebSocketUrl({
+    uniqueId: room.username,
+    apiKey: env.eulerApiKey,
+    features: { bundleEvents: true },
+  });
+  const connection = new WebSocket(url);
+  room.connection = connection;
+
+  connection.addEventListener("open", () => {
+    logger.debug({ username: room.username }, "[TIKTOK] websocket opened");
+  });
+
+  connection.addEventListener("message", (event) => {
+    try {
+      const raw = typeof event.data === "string" ? event.data : Buffer.from(event.data as ArrayBuffer).toString("utf8");
+      for (const message of parseEulerFrame(raw)) handleEulerEvent(room, message);
+    } catch (e: any) {
+      logger.error({ username: room.username, err: e?.message }, "[TIKTOK] websocket message error");
+    }
+  });
+
+  connection.addEventListener("error", () => {
+    room.lastError = "Euler WebSocket error";
+    logger.warn({ username: room.username }, "[TIKTOK] websocket error");
+  });
+
+  connection.addEventListener("close", (event) => {
+    handleEulerClose(room, event.code, event.reason).catch((e) => {
+      room.lastError = e?.message || String(e);
+      room.isRunning = false;
+      room.isConnecting = false;
+      rooms.delete(room.username);
+      logger.error({ username: room.username, err: room.lastError }, "[TIKTOK] websocket close handler failed");
+    });
+  });
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -456,6 +529,8 @@ export async function startTikTokCollector({
     collectorSessionId: randomUUID(),
     roomId: null,
     connection: null,
+    reconnectTimer: null,
+    hasEmittedConnected: false,
     isConnecting: true,
     isRunning: false,
     isStopping: false,
@@ -532,8 +607,13 @@ export async function stopTikTokCollector({
     await onCollectorStopped(room);
   }
 
+  if (room.reconnectTimer) {
+    clearTimeout(room.reconnectTimer);
+    room.reconnectTimer = null;
+  }
+
   try {
-    room.connection?.disconnect?.();
+    room.connection?.close?.();
   } catch {
     // ignore disconnect errors
   }
