@@ -512,6 +512,7 @@ export type SubmitManualShippingParams = {
   orderId: string;
   paymentSide: 0 | 1;
   shippingFee?: number;
+  codAmount?: number;
   note?: string;
   idempotencyKey: string;
   senderAddressId: string;
@@ -573,13 +574,23 @@ export async function submitManualShipping(params: SubmitManualShippingParams) {
   const receiver = customerAddrRows[0];
   if (!receiver) throw badRequest("Địa chỉ giao hàng không tồn tại.");
 
-  // Reconcile order amounts from items
+  // Reconcile order amounts from items — include manual shippingFee so totalAmount/codAmount are correct
   const items = await db
     .select({ price: orderItems.price, quantity: orderItems.quantity })
     .from(orderItems)
     .where(eq(orderItems.orderId, params.orderId));
   const subtotalAmount = items.reduce((sum, item) => sum + toMoney(item.price) * (item.quantity ?? 1), 0);
-  const amounts = reconcileOrderAmounts({ ...order, subtotalAmount });
+  const amounts = reconcileOrderAmounts({
+    ...order,
+    subtotalAmount,
+    shippingFee: params.shippingFee ?? order.shippingFee ?? 0,
+  });
+  // ponytail: manual COD is seller-entered, not derivable from items (price=0 in DB)
+  if (params.codAmount != null) {
+    amounts.codAmount = params.codAmount;
+    amounts.remainingAmount = params.codAmount;
+    amounts.totalAmount = params.codAmount + (amounts.depositAmount ?? 0);
+  }
   await db
     .update(orders)
     .set({ ...amounts, customerAddressId: addrId, updatedAt: new Date() })
