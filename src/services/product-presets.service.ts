@@ -137,30 +137,34 @@ export async function matchPresetByComment(
     return preset;
   }
 
+  function codeMatches(code: string): boolean {
+    if (!code) return false;
+    const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (text === code || text.includes(code)) return true;
+    if (new RegExp(`(?:^|\\s|[#%])${escaped}(?:$|\\s|[^a-z0-9])`, "i").test(text)) return true;
+    // ponytail: strip leading non-digit prefix (e.g. "m38" → "38") so comment "38" matches code "M38"
+    const suffix = code.replace(/^[^0-9]+/, "");
+    if (suffix && suffix !== code) {
+      const escapedSuffix = suffix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (text === suffix || new RegExp(`(?:^|\\s|[#%])${escapedSuffix}(?:$|\\s|[^a-z0-9])`, "i").test(text))
+        return true;
+    }
+    return false;
+  }
+
   // Pass 3: match by code + color (any preset with a code, regardless of name)
   for (const preset of presets) {
     const code = preset.code.trim().toLowerCase();
     const color = (preset.color ?? "").trim().toLowerCase();
     if (!code) continue;
-    const escapedCode = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const codeMatch =
-      text === code ||
-      text.includes(code) ||
-      new RegExp(`(?:^|\\s|[#%])${escapedCode}(?:$|\\s|[^a-z0-9])`, "i").test(text);
-    if (codeMatch && color && matchesKeyword(color)) return preset;
+    if (codeMatches(code) && color && matchesKeyword(color)) return preset;
   }
 
   // Pass 4: match by code only (any preset with a code, regardless of name)
   for (const preset of presets) {
     const code = preset.code.trim().toLowerCase();
     if (!code) continue;
-    const escapedCode = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    if (
-      text === code ||
-      text.includes(code) ||
-      new RegExp(`(?:^|\\s|[#%])${escapedCode}(?:$|\\s|[^a-z0-9])`, "i").test(text)
-    )
-      return preset;
+    if (codeMatches(code)) return preset;
   }
 
   return null;

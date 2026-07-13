@@ -6,7 +6,7 @@ import { mutateOk, ok } from "../lib/response.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { ApiError } from "../lib/api-error.js";
 import { db } from "../lib/db.js";
-import { users } from "../db/schema/index.js";
+import { users, shops } from "../db/schema/index.js";
 import { bootstrapAccountContext, getShopActivityFlags, requireShopId } from "../services/account.service.js";
 import {
   listTikTokChannelsWithBackfill,
@@ -141,6 +141,57 @@ router.delete(
       .set({ spxUserId: null, spxUserSecret: null })
       .where(eq(users.id, userId));
     return mutateOk(response, "Đã ngắt kết nối tài khoản SPX.");
+  }),
+);
+
+const updateProfileSchema = z.object({
+  fullName: z.string().min(1).max(100).optional(),
+  phone: z.string().min(1).max(20).optional().nullable(),
+  shopName: z.string().min(1).max(100).optional(),
+  facebookUrl: z.string().max(500).optional().nullable(),
+  tiktokUrl: z.string().max(500).optional().nullable(),
+  youtubeUrl: z.string().max(500).optional().nullable(),
+});
+
+// PATCH /api/me/profile
+router.patch(
+  "/profile",
+  requireAuth,
+  asyncHandler(async (request, response) => {
+    const userId = request.authUserId!;
+    const body = updateProfileSchema.parse(request.body || {});
+
+    const hasUserUpdate =
+      body.fullName !== undefined ||
+      body.phone !== undefined ||
+      body.facebookUrl !== undefined ||
+      body.tiktokUrl !== undefined ||
+      body.youtubeUrl !== undefined;
+
+    if (hasUserUpdate) {
+      const userUpdates: {
+        fullName?: string;
+        phone?: string | null;
+        facebookUrl?: string | null;
+        tiktokUrl?: string | null;
+        youtubeUrl?: string | null;
+      } = {};
+      if (body.fullName !== undefined) userUpdates.fullName = body.fullName;
+      if (body.phone !== undefined) userUpdates.phone = body.phone;
+      if (body.facebookUrl !== undefined) userUpdates.facebookUrl = body.facebookUrl;
+      if (body.tiktokUrl !== undefined) userUpdates.tiktokUrl = body.tiktokUrl;
+      if (body.youtubeUrl !== undefined) userUpdates.youtubeUrl = body.youtubeUrl;
+      await db.update(users).set(userUpdates).where(eq(users.id, userId));
+    }
+
+    if (body.shopName !== undefined) {
+      const context = await bootstrapAccountContext(request);
+      if (context.shop?.id) {
+        await db.update(shops).set({ name: body.shopName }).where(eq(shops.id, context.shop.id));
+      }
+    }
+
+    return mutateOk(response, "Cập nhật hồ sơ thành công.");
   }),
 );
 

@@ -1,12 +1,14 @@
 import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../lib/async-handler.js";
+import { notFound } from "../lib/api-error.js";
 import { ok, mutateOk } from "../lib/response.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { requireAdmin, requireManager } from "../middlewares/require-role.js";
 import { activateLicenseFromPayment, getCurrentLicense, changeLicenseTier } from "../services/license.service.js";
 import { seedLicensePlans } from "../db/seed-license-plans.js";
 import { changeUserPassword } from "../services/auth.service.js";
+import { searchUsers, getUserDetail } from "../services/admin.service.js";
 
 const router = Router();
 
@@ -90,6 +92,37 @@ router.post(
   asyncHandler(async (_request, response) => {
     await seedLicensePlans();
     return ok(response, { seeded: true });
+  }),
+);
+
+// ─── User search & detail (manager+) ─────────────────────────────────────────
+
+const searchUsersSchema = z.object({
+  username: z.string().default(""),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+router.get(
+  "/users",
+  requireAuth,
+  requireManager,
+  asyncHandler(async (request, response) => {
+    const query = searchUsersSchema.parse(request.query ?? {});
+    const result = await searchUsers(query);
+    return ok(response, result);
+  }),
+);
+
+router.get(
+  "/users/:userId",
+  requireAuth,
+  requireManager,
+  asyncHandler(async (request, response) => {
+    const userId = String(request.params.userId);
+    const result = await getUserDetail(userId);
+    if (!result) throw notFound("Không tìm thấy người dùng.");
+    return ok(response, result);
   }),
 );
 

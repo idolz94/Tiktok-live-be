@@ -88,14 +88,17 @@ const submitSpxSchema = z.object({
   allowPartialDelivery: z.union([z.literal(0), z.literal(1)]).optional(),
   voucherCode: z.string().trim().min(1).optional(),
   customerAddressId: z.string().uuid().optional(),
+  codCollection: z.union([z.literal(0), z.literal(1)]).optional(),
 });
 
 const manualShippingSchema = z.object({
   providerCode: shippingProviderCodeSchema.default("manual"),
   paymentSide: z.union([z.literal(0), z.literal(1)]).default(0),
   shippingFee: z.number().min(0).optional(),
-  codAmount: z.number().min(0).optional(),
   note: z.string().optional(),
+  idempotencyKey: z.string().uuid(),
+  senderAddressId: z.string().uuid(),
+  customerAddressId: z.string().uuid().optional(),
 });
 
 const cancelShippingSchema = z.object({
@@ -306,8 +309,10 @@ router.post(
       orderId: String(request.params.orderId),
       paymentSide: body.paymentSide,
       shippingFee: body.shippingFee,
-      codAmount: body.codAmount,
       note: body.note,
+      idempotencyKey: body.idempotencyKey,
+      senderAddressId: body.senderAddressId,
+      customerAddressId: body.customerAddressId,
     });
 
     return mutateOk(response, "Tạo vận đơn thủ công thành công.", { shipping: result });
@@ -397,6 +402,7 @@ router.post(
       allowPartialDelivery: body.allowPartialDelivery,
       voucherCode: body.voucherCode,
       customerAddressId: body.customerAddressId,
+      codCollection: body.codCollection,
     });
 
     return mutateOk(response, "Tạo vận đơn SPX thành công.", { shipping: result });

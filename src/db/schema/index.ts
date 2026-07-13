@@ -26,6 +26,9 @@ export const users = pgTable("users", {
   status: text("status").notNull().default("active"),
   spxUserId: bigint("spx_user_id", { mode: "number" }),
   spxUserSecret: text("spx_user_secret"),
+  facebookUrl: text("facebook_url"),
+  tiktokUrl: text("tiktok_url"),
+  youtubeUrl: text("youtube_url"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

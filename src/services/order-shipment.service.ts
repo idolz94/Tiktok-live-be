@@ -268,6 +268,7 @@ export type CreateSpxShipmentParams = {
   allowPartialDelivery?: 0 | 1;
   voucherCode?: string;
   customerAddressId?: string;
+  codCollection?: 0 | 1;
 };
 
 export async function createSpxShipment(params: CreateSpxShipmentParams) {
@@ -347,6 +348,7 @@ export async function createSpxShipment(params: CreateSpxShipmentParams) {
     spxAllowMutualCheck: params.allowMutualCheck,
     spxAllowTryOn: params.allowTryOn,
     spxAllowPartialDelivery: params.allowPartialDelivery,
+    spxCodCollection: params.codCollection,
     note: params.note,
   };
 
@@ -510,8 +512,10 @@ export type SubmitManualShippingParams = {
   orderId: string;
   paymentSide: 0 | 1;
   shippingFee?: number;
-  codAmount?: number;
   note?: string;
+  idempotencyKey: string;
+  senderAddressId: string;
+  customerAddressId?: string;
 };
 
 async function generateManualTrackingLabel(): Promise<string> {
@@ -539,6 +543,48 @@ export async function submitManualShipping(params: SubmitManualShippingParams) {
     throw badRequest("Đơn hàng đã có vận đơn. Hủy vận đơn cũ trước khi tạo mới.");
   }
 
+  // Idempotency guard — mirror SPX pattern
+  const existing = await db
+    .select()
+    .from(orderShipments)
+    .where(eq(orderShipments.idempotencyKey, params.idempotencyKey))
+    .limit(1);
+  if (existing[0]) {
+    return { ...existing[0], orderId: params.orderId, idempotent: true };
+  }
+
+  // Resolve sender address
+  const senderRows = await db
+    .select()
+    .from(shopAddresses)
+    .where(and(eq(shopAddresses.id, params.senderAddressId), eq(shopAddresses.shopId, params.shopId)))
+    .limit(1);
+  const sender = senderRows[0];
+  if (!sender) throw badRequest("Địa chỉ lấy hàng không tồn tại.");
+
+  // Resolve receiver address
+  const addrId = params.customerAddressId ?? order.customerAddressId;
+  if (!addrId) throw badRequest("Đơn hàng chưa có địa chỉ giao hàng.");
+  const customerAddrRows = await db
+    .select()
+    .from(customerAddresses)
+    .where(eq(customerAddresses.id, addrId))
+    .limit(1);
+  const receiver = customerAddrRows[0];
+  if (!receiver) throw badRequest("Địa chỉ giao hàng không tồn tại.");
+
+  // Reconcile order amounts from items
+  const items = await db
+    .select({ price: orderItems.price, quantity: orderItems.quantity })
+    .from(orderItems)
+    .where(eq(orderItems.orderId, params.orderId));
+  const subtotalAmount = items.reduce((sum, item) => sum + toMoney(item.price) * (item.quantity ?? 1), 0);
+  const amounts = reconcileOrderAmounts({ ...order, subtotalAmount });
+  await db
+    .update(orders)
+    .set({ ...amounts, customerAddressId: addrId, updatedAt: new Date() })
+    .where(and(eq(orders.id, params.orderId), eq(orders.shopId, params.shopId)));
+
   const trackingLabel = await generateManualTrackingLabel();
 
   const result = {
@@ -560,14 +606,21 @@ export async function submitManualShipping(params: SubmitManualShippingParams) {
     providerCode: "manual",
     result,
     note: params.note,
+    targetOrderStatus: "confirmed",
+    extra: {
+      idempotencyKey: params.idempotencyKey,
+      senderName: sender.name ?? undefined,
+      senderPhone: sender.phone ?? undefined,
+      senderDetailAddress: sender.address ?? undefined,
+      senderProvince: sender.province ?? undefined,
+      senderWard: sender.ward ?? undefined,
+      receiverName: receiver.name ?? undefined,
+      receiverPhone: receiver.phone ?? undefined,
+      receiverDetailAddress: receiver.address ?? undefined,
+      receiverProvince: receiver.province ?? undefined,
+      receiverWard: receiver.ward ?? undefined,
+    },
   });
-
-  if (params.codAmount !== undefined) {
-    await db
-      .update(orders)
-      .set({ codAmount: params.codAmount, updatedAt: new Date() })
-      .where(and(eq(orders.id, params.orderId), eq(orders.shopId, params.shopId)));
-  }
 
   return { ...result, orderId: params.orderId };
 }
