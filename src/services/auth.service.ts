@@ -262,3 +262,27 @@ export async function changeUserPassword(userId: string, newPassword: string): P
   const passwordHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
   await db.update(users).set({ passwordHash, updatedAt: new Date() }).where(eq(users.id, userId));
 }
+
+export async function verifyAndChangeUserPassword(
+  userId: string,
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  const rows = await db
+    .select({ passwordHash: users.passwordHash })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  const user = rows[0];
+  if (!user) throw badRequest("Người dùng không tồn tại.");
+
+  if (!user.passwordHash) {
+    throw badRequest("Tài khoản này đăng nhập qua mạng xã hội, không có mật khẩu để thay đổi.");
+  }
+
+  const isMatch = await bcrypt.compare(currentPassword, user.passwordHash);
+  if (!isMatch) throw unauthorized("Mật khẩu hiện tại không đúng.");
+
+  await changeUserPassword(userId, newPassword);
+}

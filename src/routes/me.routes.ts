@@ -13,6 +13,7 @@ import {
   updateTikTokChannel,
 } from "../services/tiktok-channels.service.js";
 import { spxCreateAccount } from "../services/providers/spx.service.js";
+import { verifyAndChangeUserPassword } from "../services/auth.service.js";
 
 const router = Router();
 
@@ -192,6 +193,26 @@ router.patch(
     }
 
     return mutateOk(response, "Cập nhật hồ sơ thành công.");
+  }),
+);
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z
+    .string()
+    .min(6, "Mật khẩu mới phải có ít nhất 6 ký tự.")
+    .regex(/^[a-zA-Z0-9]+$/, "Mật khẩu chỉ được chứa chữ cái và chữ số."),
+});
+
+// PATCH /api/me/password
+router.patch(
+  "/password",
+  requireAuth,
+  asyncHandler(async (request, response) => {
+    const userId = request.authUserId!;
+    const body = changePasswordSchema.parse(request.body || {});
+    await verifyAndChangeUserPassword(userId, body.currentPassword, body.newPassword);
+    return mutateOk(response, "Đổi mật khẩu thành công.");
   }),
 );
 
