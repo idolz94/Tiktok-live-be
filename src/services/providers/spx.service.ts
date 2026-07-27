@@ -2,7 +2,6 @@ import { createHmac } from "crypto";
 import { ApiError } from "../../lib/api-error.js";
 import { env } from "../../config/env.js";
 import { getSpxErrorMessage } from "./spx.errors.js";
-import logger from "../../lib/logger.js";
 
 function toE164VN(phone: string): string {
   return phone.startsWith("0") ? "84" + phone.slice(1) : phone;
@@ -67,14 +66,7 @@ async function spxPost(path: string, environment: string, body: unknown): Promis
     throw new ApiError(502, "Không đọc được phản hồi từ SPX.", "SPX_PARSE_ERROR");
   }
 
-  if (!path.includes("get_pickup_time")) {
-    logger.debug({ path, payload }, "[SPX curl]");
-    logger.debug({ response: data }, "[SPX response]");
-  }
-
   if (data.ret_code !== 0) {
-    // ponytail: always surface SPX errors even for suppressed debug paths
-    logger.warn({ path, ret_code: data.ret_code, message: data.message }, "[SPX error]");
     throwSpxError(data);
   }
   return data.data;

@@ -62,16 +62,15 @@ router.post(
   "/start",
   requireAuth,
   asyncHandler(async (request, response) => {
-    logger.debug({ body: request.body }, "[LIVE-STREAM] POST /start");
     const context = await requireUsableAccountContext(request);
     const body = usernameSchema.parse(request.body || {});
 
     try {
-      const collectorResult = await startTikTokCollector({
+      await startTikTokCollector({
         username: body.username,
         shopId: context.shop.id,
       });
-      logger.info({ result: collectorResult }, "[COLLECTOR_START]");
+      logger.info("[COLLECTOR_START]");
     } catch (error: any) {
       logger.error({ err: error?.message || error }, "[COLLECTOR_START_FAILED]");
       return response.status(400).json({
@@ -99,7 +98,7 @@ router.post(
       silent,
     });
 
-    logger.info({ result: collector }, "[COLLECTOR_STOP]");
+    logger.info("[COLLECTOR_STOP]");
 
     if (!silent) {
       // Fire-and-forget: don't wait for DB cleanup on the critical path

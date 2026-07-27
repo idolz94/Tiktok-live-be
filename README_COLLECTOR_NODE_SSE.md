@@ -44,7 +44,6 @@ POST /api/live-stream/stop  { "username": "@shop" }
 ```env
 NODE_INTERNAL_API_KEY=change_me
 COLLECTOR_BASE_URL=http://localhost:8765
-COLLECTOR_CONTROL_API_KEY=change_me
 ```
 
 The collector `.env` must use the same values:
@@ -52,7 +51,6 @@ The collector `.env` must use the same values:
 ```env
 NODE_COMMENT_INGEST_URL=http://localhost:3001/api/internal/live-comments/ingest
 NODE_INTERNAL_API_KEY=change_me
-COLLECTOR_CONTROL_API_KEY=change_me
 ```
 
 ## Shop mapping
