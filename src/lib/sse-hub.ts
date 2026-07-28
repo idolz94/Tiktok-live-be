@@ -46,6 +46,20 @@ function deliverToLocalClients(shopId: string, event: SseEventName, data: unknow
   return sent;
 }
 
+function deliverToUserClients(userId: string, event: SseEventName, data: unknown) {
+  let sent = 0;
+  for (const client of clients.values()) {
+    if (client.userId !== userId) continue;
+    try {
+      writeEvent(client.response, event, data);
+      sent += 1;
+    } catch {
+      clients.delete(client.id);
+    }
+  }
+  return sent;
+}
+
 export function addSseClient(client: SseClient) {
   const existing = clients.get(client.id);
   if (existing) {
@@ -83,6 +97,12 @@ export function sendSseToClient(clientId: string, event: SseEventName, data: unk
 export function broadcastSseToShop(shopId: string, event: SseEventName, data: unknown) {
   const sent = deliverToLocalClients(shopId, event, data);
   logger.debug({ shopId, event, sent }, "[SSE] broadcast");
+  return sent;
+}
+
+export function sendSseToUser(userId: string, event: SseEventName, data: unknown) {
+  const sent = deliverToUserClients(userId, event, data);
+  logger.debug({ userId, event, sent }, "[SSE] send user");
   return sent;
 }
 

@@ -5,7 +5,7 @@ import {
   type DecodedData,
   createWebSocketUrl,
 } from "@eulerstream/euler-websocket-sdk";
-import { broadcastSseToShop } from "../lib/sse-hub.js";
+import { broadcastSseToShop, sendSseToUser } from "../lib/sse-hub.js";
 import { enqueueLiveEvent } from "../lib/queues.js";
 import logger from "../lib/logger.js";
 import { env } from "../config/env.js";
@@ -23,6 +23,7 @@ import { updateTikTokChannelProfile } from "./tiktok-channels.service.js";
 type RoomState = {
   username: string;
   shopId: string | null;
+  userId: string | null;
   liveSessionId: string | null;
   collectorSessionId: string;
   roomId: string | null;
@@ -40,8 +41,17 @@ type RoomState = {
 
 const rooms = new Map<string, RoomState>();
 
+function roomKey(username: string, shopId?: string | null, userId?: string | null) {
+  return `${shopId || "global"}:${userId || "global"}:${username}`;
+}
+
 function nowIso() {
   return new Date().toISOString();
+}
+
+function sendRoomSse(room: RoomState, shopId: string, event: Parameters<typeof broadcastSseToShop>[1], payload: unknown) {
+  if (room.userId) return sendSseToUser(room.userId, event, payload);
+  return broadcastSseToShop(shopId, event, payload);
 }
 
 // ─── Ingest helpers (direct calls — no HTTP) ─────────────────────────────────
@@ -69,6 +79,7 @@ async function ingestComment(room: RoomState, data: any) {
 
   const session = await ensureCollectorLiveSession({
     shopId: shop.id,
+    userId: room.userId,
     liveUsername: room.username,
     collectorSessionId: room.collectorSessionId,
     startedAt: createdAt,
@@ -122,7 +133,7 @@ async function ingestComment(room: RoomState, data: any) {
     createdAt,
   };
 
-  broadcastSseToShop(shop.id, "COMMENT", realtimePayload);
+  sendRoomSse(room, shop.id, "COMMENT", realtimePayload);
 
   await enqueueLiveEvent("comment-saved", {
     shopId: shop.id,
@@ -171,7 +182,7 @@ async function onConnected(room: RoomState, roomId: string | null) {
     createdAt,
   };
 
-  broadcastSseToShop(result.shopId, "LIVE_CONNECTED", payload);
+  sendRoomSse(room, result.shopId, "LIVE_CONNECTED", payload);
   await enqueueLiveEvent("collector-live-connected", payload);
 
   logger.debug({ username: room.username, sessionId: session.id }, "[TIKTOK] LIVE_CONNECTED");
@@ -184,12 +195,12 @@ async function onDisconnected(room: RoomState) {
   const result = await ingestLiveEvent(room, "LIVE_DISCONNECTED");
   if (!result) return;
 
-  const ownerUserId = await findShopOwnerUserId(result.shopId);
-  if (!ownerUserId) return;
+  const userId = room.userId || await findShopOwnerUserId(result.shopId);
+  if (!userId) return;
 
   const session = await endLiveSession({
     shopId: result.shopId,
-    userId: ownerUserId,
+    userId,
     sessionId: room.collectorSessionId,
     username: room.username,
     endedAt,
@@ -211,7 +222,7 @@ async function onDisconnected(room: RoomState) {
     commentCount: room.commentCount,
   };
 
-  broadcastSseToShop(result.shopId, "LIVE_DISCONNECTED", payload);
+  sendRoomSse(room, result.shopId, "LIVE_DISCONNECTED", payload);
   await enqueueLiveEvent("collector-live-disconnected", payload);
 
   try {
@@ -226,13 +237,13 @@ async function onError(room: RoomState, message: string) {
   const result = await ingestLiveEvent(room, "LIVE_ERROR");
   if (!result) return;
 
-  const ownerUserId = await findShopOwnerUserId(result.shopId);
+  const userId = room.userId || await findShopOwnerUserId(result.shopId);
   let session: any = null;
 
-  if (ownerUserId) {
+  if (userId) {
     session = await endLiveSession({
       shopId: result.shopId,
-      userId: ownerUserId,
+      userId,
       sessionId: room.collectorSessionId,
       username: room.username,
       endedAt: createdAt,
@@ -257,7 +268,7 @@ async function onError(room: RoomState, message: string) {
     durationSeconds: session?.durationSeconds || 0,
   };
 
-  broadcastSseToShop(result.shopId, "LIVE_ERROR", payload);
+  sendRoomSse(room, result.shopId, "LIVE_ERROR", payload);
   await enqueueLiveEvent("collector-live-error", payload);
 
   try {
@@ -272,13 +283,13 @@ async function onCollectorStopped(room: RoomState, options?: { silent?: boolean 
   const result = await ingestLiveEvent(room, "COLLECTOR_STOPPED");
   if (!result) return;
 
-  const ownerUserId = await findShopOwnerUserId(result.shopId);
+  const userId = room.userId || await findShopOwnerUserId(result.shopId);
   let session: any = null;
 
-  if (ownerUserId) {
+  if (userId) {
     session = await endLiveSession({
       shopId: result.shopId,
-      userId: ownerUserId,
+      userId,
       sessionId: room.collectorSessionId,
       username: room.username,
       endedAt,
@@ -302,7 +313,7 @@ async function onCollectorStopped(room: RoomState, options?: { silent?: boolean 
   };
 
   if (!options?.silent) {
-    broadcastSseToShop(result.shopId, "COLLECTOR_STOPPED", payload);
+    sendRoomSse(room, result.shopId, "COLLECTOR_STOPPED", payload);
   }
   await enqueueLiveEvent("collector-stopped", payload);
 }
@@ -315,7 +326,7 @@ async function onViewerCount(room: RoomState, viewersCount: number) {
 
   if (!shop?.id) return;
 
-  broadcastSseToShop(shop.id, "VIEWER_COUNT_UPDATE", {
+  sendRoomSse(room, shop.id, "VIEWER_COUNT_UPDATE", {
     shopId: shop.id,
     liveUsername: room.username,
     viewersCount,
@@ -337,7 +348,7 @@ async function onUserJoined(room: RoomState, data: any) {
 
   if (!shop?.id) return;
 
-  broadcastSseToShop(shop.id, "USER_JOINED", {
+  sendRoomSse(room, shop.id, "USER_JOINED", {
     shopId: shop.id,
     liveUsername: room.username,
     nickname: joinDisplayName,
@@ -427,7 +438,7 @@ function shouldReconnect(code: number) {
 }
 
 function reconnectRoom(room: RoomState) {
-  if (room.isStopping || !rooms.has(room.username)) return;
+  if (room.isStopping || !rooms.has(roomKey(room.username, room.shopId, room.userId))) return;
   room.reconnectTimer = setTimeout(() => {
     room.reconnectTimer = null;
     connectRoom(room).catch((e) => logger.error({ err: e?.message }, "[TIKTOK] reconnect failed"));
@@ -448,8 +459,10 @@ async function handleEulerClose(room: RoomState, code: number, reason: string) {
   room.isRunning = false;
   room.isConnecting = false;
 
+  const key = roomKey(room.username, room.shopId, room.userId);
+
   if (!room.hasEmittedConnected && code === ClientCloseCode.NOT_LIVE) {
-    rooms.delete(room.username);
+    rooms.delete(key);
     throw new Error("TikTok chưa bật live");
   }
 
@@ -458,7 +471,7 @@ async function handleEulerClose(room: RoomState, code: number, reason: string) {
   } else {
     await onError(room, reason || `Euler closed with code ${code}`);
   }
-  rooms.delete(room.username);
+  rooms.delete(key);
 }
 
 async function connectRoom(room: RoomState) {
@@ -493,7 +506,7 @@ async function connectRoom(room: RoomState) {
       room.lastError = e?.message || String(e);
       room.isRunning = false;
       room.isConnecting = false;
-      rooms.delete(room.username);
+      rooms.delete(roomKey(room.username, room.shopId, room.userId));
       logger.error({ username: room.username, err: room.lastError }, "[TIKTOK] websocket close handler failed");
     });
   });
@@ -504,16 +517,19 @@ async function connectRoom(room: RoomState) {
 export async function startTikTokCollector({
   username,
   shopId,
+  userId,
   liveSessionId,
 }: {
   username: string;
   shopId?: string | null;
+  userId?: string | null;
   liveSessionId?: string | null;
 }) {
   const normalized = username.replace(/^@/, "").trim().toLowerCase();
+  const key = roomKey(normalized, shopId, userId);
 
-  if (rooms.has(normalized)) {
-    const existing = rooms.get(normalized)!;
+  if (rooms.has(key)) {
+    const existing = rooms.get(key)!;
     return {
       ok: true,
       message: "Collector already running",
@@ -525,6 +541,7 @@ export async function startTikTokCollector({
   const room: RoomState = {
     username: normalized,
     shopId: shopId || null,
+    userId: userId || null,
     liveSessionId: liveSessionId || null,
     collectorSessionId: randomUUID(),
     roomId: null,
@@ -540,7 +557,7 @@ export async function startTikTokCollector({
     lastError: null,
   };
 
-  rooms.set(normalized, room);
+  rooms.set(key, room);
 
   logger.debug({ username: normalized, shopId }, "[TIKTOK] startTikTokCollector");
   connectRoom(room).catch((err) => {
@@ -549,7 +566,7 @@ export async function startTikTokCollector({
     room.isConnecting = false;
     room.isRunning = false;
     room.lastError = message;
-    rooms.delete(normalized);
+    rooms.delete(key);
 
     if (room.shopId) {
       const isOffline =
@@ -557,7 +574,7 @@ export async function startTikTokCollector({
         message.toLowerCase().includes("offline");
       const friendlyMessage = isOffline ? "TikTok chưa bật live" : message;
       const createdAt = nowIso();
-      broadcastSseToShop(room.shopId, "LIVE_ERROR", {
+      sendRoomSse(room, room.shopId, "LIVE_ERROR", {
         shopId: room.shopId,
         liveSessionId: null,
         live_session_id: null,
@@ -585,13 +602,18 @@ export async function startTikTokCollector({
 
 export async function stopTikTokCollector({
   username,
+  shopId,
+  userId,
   silent,
 }: {
   username: string;
+  shopId?: string | null;
+  userId?: string | null;
   silent?: boolean;
 }) {
   const normalized = username.replace(/^@/, "").trim().toLowerCase();
-  const room = rooms.get(normalized);
+  const key = roomKey(normalized, shopId, userId);
+  const room = rooms.get(key);
 
   if (!room) {
     return { ok: true, message: "Collector not running", username: normalized };
@@ -618,7 +640,7 @@ export async function stopTikTokCollector({
     // ignore disconnect errors
   }
 
-  rooms.delete(normalized);
+  rooms.delete(key);
 
   return {
     ok: true,

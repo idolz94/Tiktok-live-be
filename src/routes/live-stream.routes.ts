@@ -8,7 +8,7 @@ import { addSseClient, getSseStats } from "../lib/sse-hub.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { requireUsableAccountContext } from "../services/account.service.js";
 import { startTikTokCollector, stopTikTokCollector } from "../services/tiktok-collector.service.js";
-import { endRunningLiveSession, getRunningLiveSession } from "../services/live-sessions.service.js";
+import { getRunningLiveSession } from "../services/live-sessions.service.js";
 import { getLiveSessionComments } from "../services/live-comments.service.js";
 
 const router = Router();
@@ -69,6 +69,7 @@ router.post(
       await startTikTokCollector({
         username: body.username,
         shopId: context.shop.id,
+        userId: context.userId,
       });
       logger.info("[COLLECTOR_START]");
     } catch (error: any) {
@@ -95,19 +96,12 @@ router.post(
 
     const collector = await stopTikTokCollector({
       username,
+      shopId: context.shop.id,
+      userId: context.userId,
       silent,
     });
 
     logger.info("[COLLECTOR_STOP]");
-
-    if (!silent) {
-      // Fire-and-forget: don't wait for DB cleanup on the critical path
-      endRunningLiveSession({
-        shopId: context.shop.id,
-        tiktokUsername: username,
-        reason: "manual_stop",
-      }).catch(() => {});
-    }
 
     return mutateOk(response, "Đã gửi yêu cầu dừng live stream.", {
       collector,

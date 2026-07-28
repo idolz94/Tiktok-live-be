@@ -9,6 +9,7 @@ export async function addOrderItem({
   orderId,
   productCode = "",
   productName = "",
+  color = "",
   price,
   quantity,
 }: {
@@ -16,6 +17,7 @@ export async function addOrderItem({
   orderId: string;
   productCode?: string;
   productName?: string;
+  color?: string;
   price: number;
   quantity: number;
 }) {
@@ -23,7 +25,7 @@ export async function addOrderItem({
 
   const [item] = await db
     .insert(orderItems)
-    .values({ orderId, shopId, productCode, productName, variantName: "", color: "", size: "", quantity, price, rawCommentText: "" })
+    .values({ orderId, shopId, productCode, productName, variantName: "", color, size: "", quantity, price, rawCommentText: "" })
     .returning();
 
   await updateOrderAmounts(orderId, shopId);
@@ -36,6 +38,7 @@ export async function updateOrderItem({
   itemId,
   productCode,
   productName,
+  color,
   price,
   quantity,
 }: {
@@ -44,6 +47,7 @@ export async function updateOrderItem({
   itemId: string;
   productCode?: string;
   productName?: string;
+  color?: string;
   price?: number;
   quantity?: number;
 }) {
@@ -60,6 +64,7 @@ export async function updateOrderItem({
   const patch: Record<string, unknown> = {};
   if (productCode !== undefined) patch.productCode = productCode;
   if (productName !== undefined) patch.productName = productName;
+  if (color !== undefined) patch.color = color;
   if (price !== undefined) patch.price = price;
   if (quantity !== undefined) patch.quantity = quantity;
 

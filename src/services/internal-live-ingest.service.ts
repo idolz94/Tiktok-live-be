@@ -48,11 +48,13 @@ export async function resolveShopForCollectorEvent({
 
 export async function ensureCollectorLiveSession({
   shopId,
+  userId,
   liveUsername,
   collectorSessionId,
   startedAt,
 }: {
   shopId: string;
+  userId?: string | null;
   liveUsername: string;
   collectorSessionId: string;
   startedAt: string;
@@ -60,12 +62,12 @@ export async function ensureCollectorLiveSession({
   const existed = await findLiveSessionByExternalId({ shopId, sessionId: collectorSessionId });
   if (existed) return existed;
 
-  const ownerUserId = await findShopOwnerUserId(shopId);
-  if (!ownerUserId) throw new Error("Không tìm thấy user sở hữu shop để tạo live session.");
+  const finalUserId = userId || await findShopOwnerUserId(shopId);
+  if (!finalUserId) throw new Error("Không tìm thấy user sở hữu shop để tạo live session.");
 
   return startLiveSession({
     shopId,
-    userId: ownerUserId,
+    userId: finalUserId,
     sessionId: collectorSessionId,
     username: liveUsername,
     startedAt,

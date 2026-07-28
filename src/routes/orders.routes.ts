@@ -49,6 +49,7 @@ const statusSchema = z.object({
 const orderItemSchema = z.object({
   productCode: z.string().optional().default(""),
   productName: z.string().optional().default(""),
+  color: z.string().optional().default(""),
   price: z.number().min(0).default(0),
   quantity: z.number().int().positive().default(1),
 });
@@ -219,6 +220,7 @@ router.post(
       orderId: String(request.params.orderId),
       productCode: body.productCode,
       productName: body.productName,
+      color: body.color,
       price: body.price,
       quantity: body.quantity,
     });
@@ -250,6 +252,7 @@ router.patch(
       itemId: String(request.params.itemId),
       productCode: body.productCode,
       productName: body.productName,
+      color: body.color,
       price: body.price,
       quantity: body.quantity,
     });
