@@ -15,6 +15,34 @@ import logger from "../lib/logger.js";
 const DEFAULT_PRICE = 20000;
 const DEFAULT_QUANTITY = 1;
 
+export function parseQuantityFromComment(commentText: string) {
+  const match = commentText.match(/(?:^|\s)(?:x|sl|số lượng)\s*(\d+)\b/i);
+  return match ? Number(match[1]) : DEFAULT_QUANTITY;
+}
+
+/** ponytail: parse patterns like 695k, 695K, 695.000, 695,000 from comment text */
+export function parsePriceFromComment(commentText: string): number | null {
+  // Try `<number>k` first (unambiguous price signal)
+  const kMatch = commentText.match(/\b(\d{1,3}(?:[.,]\d{3})*|\d+)[kK]\b/);
+  if (kMatch) {
+    const value = Number(kMatch[1].replace(/[.,]/g, "")) * 1000;
+    return value >= 1000 && value <= 100_000_000 ? value : null;
+  }
+  // Fallback: formatted thousands number like 695.000 or 695,000
+  const fmtMatch = commentText.match(/\b(\d{1,3})([.,])(\d{3})\b/);
+  if (fmtMatch) {
+    const value = Number(fmtMatch[1] + fmtMatch[3]);
+    return value >= 1000 && value <= 100_000_000 ? value : null;
+  }
+  // Bare large number >= 1000 (e.g. 695000)
+  const bareMatch = commentText.match(/\b(\d{5,9})\b/);
+  if (bareMatch) {
+    const value = Number(bareMatch[1]);
+    return value >= 1000 && value <= 100_000_000 ? value : null;
+  }
+  return null;
+}
+
 export function toMoney(value: unknown) {
   const n = Number(value);
   return Number.isFinite(n) ? Math.round(n) : 0;
@@ -176,7 +204,7 @@ export async function createOrderFromComment({
   liveSessionId,
   customerAddressId,
   price = DEFAULT_PRICE,
-  quantity = DEFAULT_QUANTITY,
+  quantity,
   note = "",
 }: {
   shopId: string;
@@ -198,8 +226,12 @@ export async function createOrderFromComment({
   if (!commentText) throw badRequest("Comment không có nội dung để tạo đơn.");
 
   const preset = await matchPresetByComment(shopId, commentText);
-  const safePrice = preset ? preset.price : Number.isFinite(Number(price)) ? Number(price) : DEFAULT_PRICE;
-  const safeQuantity = Number.isFinite(Number(quantity)) ? Number(quantity) : DEFAULT_QUANTITY;
+  // ponytail: preset wins; otherwise try comment text, then client-passed price, then default
+  const commentPrice = parsePriceFromComment(commentText);
+  const safePrice = preset
+    ? preset.price
+    : commentPrice ?? (Number.isFinite(Number(price)) && Number(price) > 0 ? Number(price) : DEFAULT_PRICE);
+  const safeQuantity = Number.isFinite(Number(quantity)) ? Number(quantity) : parseQuantityFromComment(commentText);
 
   const customer = await findOrCreateCustomer({ shopId, tiktokUsername: customerTiktokUsername, displayName, avatarUrl });
 

@@ -46,12 +46,20 @@ const statusSchema = z.object({
   status: z.enum(["draft", "confirmed", "packed", "shipping", "completed", "canceled", "returned"]),
 });
 
-const orderItemSchema = z.object({
+const orderItemCreateSchema = z.object({
   productCode: z.string().optional().default(""),
   productName: z.string().optional().default(""),
   color: z.string().optional().default(""),
   price: z.number().min(0).default(0),
   quantity: z.number().int().positive().default(1),
+});
+
+const orderItemUpdateSchema = z.object({
+  productCode: z.string().optional(),
+  productName: z.string().optional(),
+  color: z.string().optional(),
+  price: z.number().min(0).optional(),
+  quantity: z.number().int().positive().optional(),
 });
 
 const shippingProviderCodeSchema = z.enum(["manual", "spx"]).default("manual");
@@ -214,7 +222,7 @@ router.post(
   "/:orderId/items",
   asyncHandler(async (request, response) => {
     const context = await requireUsableAccountContext(request);
-    const body = orderItemSchema.parse(request.body || {});
+    const body = orderItemCreateSchema.parse(request.body || {});
     const item = await addOrderItem({
       shopId: context.shop.id,
       orderId: String(request.params.orderId),
@@ -245,7 +253,7 @@ router.patch(
   "/:orderId/items/:itemId",
   asyncHandler(async (request, response) => {
     const context = await requireUsableAccountContext(request);
-    const body = orderItemSchema.parse(request.body || {});
+    const body = orderItemUpdateSchema.parse(request.body || {});
     const item = await updateOrderItem({
       shopId: context.shop.id,
       orderId: String(request.params.orderId),
