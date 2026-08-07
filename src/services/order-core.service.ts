@@ -1,6 +1,6 @@
 import { eq, and, inArray, sql, gte, lt } from "drizzle-orm";
 import { db } from "../lib/db.js";
-import { orders, orderItems, orderShipments, customerAddresses, customers } from "../db/schema/index.js";
+import { orders, orderItems, orderShipments, shipmentEvents, customerAddresses, customers } from "../db/schema/index.js";
 import { badRequest, notFound } from "../lib/api-error.js";
 import { getCommentAvatar, getCommentDisplayName, getCommentText } from "../utils/comment.js";
 import { createOrderCode } from "../utils/id.js";
@@ -14,6 +14,8 @@ import logger from "../lib/logger.js";
 
 const DEFAULT_PRICE = 20000;
 const DEFAULT_QUANTITY = 1;
+const SPX_EDIT_EVENT_TYPE = "spx_order_updated";
+const SPX_EDIT_LIMIT = 3;
 
 export function parseQuantityFromComment(commentText: string) {
   const match = commentText.match(/(?:^|\s)(?:x|sl|số lượng)\s*(\d+)\b/i);
@@ -107,16 +109,21 @@ async function generateUniqueOrderCode(): Promise<string> {
   throw new Error("Failed to generate unique order code after 10 attempts");
 }
 
-export async function attachProducts<T extends { id: string; customerAddressId?: string | null; customerId?: string | null }>(orderRows: T[]): Promise<(T & { products: (typeof orderItems.$inferSelect)[]; shipment: typeof orderShipments.$inferSelect | null; customerAddressData: typeof customerAddresses.$inferSelect | null; customerType: string | null })[]> {
+export async function attachProducts<T extends { id: string; customerAddressId?: string | null; customerId?: string | null }>(orderRows: T[]): Promise<(T & { products: (typeof orderItems.$inferSelect)[]; shipment: (typeof orderShipments.$inferSelect & { spxEditCount?: number; spxEditLimit?: number; spxEditRemaining?: number }) | null; customerAddressData: typeof customerAddresses.$inferSelect | null; customerType: string | null })[]> {
   if (!orderRows.length) return orderRows.map((o) => ({ ...o, products: [], shipment: null, customerAddressData: null, customerType: null }));
 
   const orderIds = orderRows.map((o) => o.id);
   const addressIds = [...new Set(orderRows.map((o) => o.customerAddressId).filter(Boolean) as string[])];
   const customerIds = [...new Set(orderRows.map((o) => o.customerId).filter(Boolean) as string[])];
 
-  const [items, shipmentRows, addressRows, customerRows] = await Promise.all([
+  const [items, shipmentRows, editCountRows, addressRows, customerRows] = await Promise.all([
     db.select().from(orderItems).where(inArray(orderItems.orderId, orderIds)),
     db.select().from(orderShipments).where(inArray(orderShipments.orderId, orderIds)),
+    db
+      .select({ shipmentId: shipmentEvents.shipmentId, count: sql<number>`count(*)::int` })
+      .from(shipmentEvents)
+      .where(and(inArray(shipmentEvents.orderId, orderIds), eq(shipmentEvents.eventType, SPX_EDIT_EVENT_TYPE)))
+      .groupBy(shipmentEvents.shipmentId),
     addressIds.length
       ? db.select().from(customerAddresses).where(inArray(customerAddresses.id, addressIds))
       : Promise.resolve([]),
@@ -132,9 +139,20 @@ export async function attachProducts<T extends { id: string; customerAddressId?:
     byOrderId.set(item.orderId, list);
   }
 
-  const shipmentByOrderId = new Map<string, typeof orderShipments.$inferSelect>();
+  const editCountByShipmentId = new Map<string, number>();
+  for (const row of editCountRows) {
+    editCountByShipmentId.set(row.shipmentId, row.count);
+  }
+
+  const shipmentByOrderId = new Map<string, typeof orderShipments.$inferSelect & { spxEditCount?: number; spxEditLimit?: number; spxEditRemaining?: number }>();
   for (const s of shipmentRows) {
-    shipmentByOrderId.set(s.orderId, s);
+    const editCount = editCountByShipmentId.get(s.id) ?? 0;
+    shipmentByOrderId.set(s.orderId, {
+      ...s,
+      spxEditCount: editCount,
+      spxEditLimit: SPX_EDIT_LIMIT,
+      spxEditRemaining: Math.max(0, SPX_EDIT_LIMIT - editCount),
+    });
   }
 
   const addressById = new Map<string, typeof customerAddresses.$inferSelect>();
@@ -450,7 +468,13 @@ export async function updateOrder({
     .where(and(eq(orders.id, orderId), eq(orders.shopId, shopId)))
     .returning();
 
-  return updated;
+  const [items, addressRows] = await Promise.all([
+    db.select().from(orderItems).where(eq(orderItems.orderId, orderId)),
+    updated.customerAddressId
+      ? db.select().from(customerAddresses).where(eq(customerAddresses.id, updated.customerAddressId)).limit(1)
+      : Promise.resolve([]),
+  ]);
+  return { ...updated, products: items, customerAddressData: addressRows[0] ?? null };
 }
 
 export type StatChartPoint = { date: string; value: number };

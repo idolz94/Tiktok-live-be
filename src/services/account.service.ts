@@ -5,9 +5,27 @@ import { users, shops, shopMembers, orders, liveSessions } from "../db/schema/in
 import { forbidden, unauthorized } from "../lib/api-error.js";
 import { createTrialLicense, getCurrentLicense, getLicenseState } from "./license.service.js";
 
+const publicUserColumns = {
+  id: users.id,
+  username: users.username,
+  email: users.email,
+  phone: users.phone,
+  fullName: users.fullName,
+  avatarUrl: users.avatarUrl,
+  role: users.role,
+  status: users.status,
+  facebookUrl: users.facebookUrl,
+  tiktokUrl: users.tiktokUrl,
+  youtubeUrl: users.youtubeUrl,
+  createdAt: users.createdAt,
+  updatedAt: users.updatedAt,
+};
+
+type PublicUser = typeof publicUserColumns extends Record<string, infer T> ? Record<keyof typeof publicUserColumns, unknown> : never;
+
 export type AccountContext = {
   userId: string;
-  user: any | null;
+  user: PublicUser | null;
   shopMember: any | null;
   shop: any | null;
   license: any | null;
@@ -20,7 +38,7 @@ export async function getAccountContext(request: Request): Promise<AccountContex
   if (!userId) throw unauthorized();
 
   const [userRows, memberRows] = await Promise.all([
-    db.select().from(users).where(eq(users.id, userId)).limit(1),
+    db.select(publicUserColumns).from(users).where(eq(users.id, userId)).limit(1),
     db
       .select()
       .from(shopMembers)
@@ -62,7 +80,7 @@ export async function bootstrapAccountContext(request: Request): Promise<Account
   if (!userId) throw unauthorized();
 
   const [userRows, memberRows] = await Promise.all([
-    db.select().from(users).where(eq(users.id, userId)).limit(1),
+    db.select(publicUserColumns).from(users).where(eq(users.id, userId)).limit(1),
     db
       .select()
       .from(shopMembers)

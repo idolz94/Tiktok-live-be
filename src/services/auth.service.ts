@@ -2,9 +2,10 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { eq, and, or } from "drizzle-orm";
 import { db } from "../lib/db.js";
-import { users, oauthAccounts, refreshTokens } from "../db/schema/index.js";
+import { users, oauthAccounts, refreshTokens, shopMembers, tiktokChannels } from "../db/schema/index.js";
 import { env } from "../config/env.js";
-import { badRequest, unauthorized } from "../lib/api-error.js";
+import { ApiError, badRequest, unauthorized } from "../lib/api-error.js";
+import { normalizeAtUsername } from "../utils/tiktok.js";
 
 const SALT_ROUNDS = 12;
 
@@ -30,9 +31,18 @@ export function verifyAccessToken(token: string): { sub: string; role: string } 
   }
 }
 
-export async function getUserRole(userId: string): Promise<string> {
-  const rows = await db.select({ role: users.role }).from(users).where(eq(users.id, userId)).limit(1);
-  return rows[0]?.role ?? "user";
+export async function getActiveUserRole(userId: string): Promise<string> {
+  const rows = await db
+    .select({ role: users.role, status: users.status })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  if (!rows[0] || rows[0].status !== "active") {
+    throw unauthorized("Tài khoản đã bị khóa.");
+  }
+
+  return rows[0].role ?? "user";
 }
 
 export function verifyRefreshToken(token: string): { sub: string } {
@@ -137,6 +147,61 @@ export async function loginUser(input: { username: string; password: string }) {
   }
 
   return user;
+}
+
+export async function resetPasswordWithTikTok(input: {
+  username: string;
+  tiktokId: string;
+  newPassword: string;
+}) {
+  const username = input.username.trim().toLowerCase();
+  const tiktokUsername = normalizeAtUsername(input.tiktokId).toLowerCase();
+
+  const userRows = await db
+    .select()
+    .from(users)
+    .where(eq(users.username, username))
+    .limit(1);
+  const user = userRows[0] ?? null;
+
+  if (!user || user.status !== "active") {
+    throw new ApiError(
+      400,
+      "Tên tài khoản không đúng.",
+      "RESET_PASSWORD_USERNAME_NOT_FOUND",
+    );
+  }
+
+  const rows = await db
+    .select({ channelId: tiktokChannels.id })
+    .from(shopMembers)
+    .innerJoin(tiktokChannels, eq(tiktokChannels.shopId, shopMembers.shopId))
+    .where(
+      and(
+        eq(shopMembers.userId, user.id),
+        eq(shopMembers.status, "active"),
+        eq(tiktokChannels.tiktokUsername, tiktokUsername),
+        eq(tiktokChannels.status, "active"),
+      ),
+    )
+    .limit(1);
+
+  if (!rows[0]) {
+    throw new ApiError(
+      400,
+      "TikTok ID không đúng.",
+      "RESET_PASSWORD_TIKTOK_ID_NOT_FOUND",
+    );
+  }
+
+  const passwordHash = await bcrypt.hash(input.newPassword, SALT_ROUNDS);
+
+  await db
+    .update(users)
+    .set({ passwordHash, updatedAt: new Date() })
+    .where(eq(users.id, user.id));
+
+  await db.delete(refreshTokens).where(eq(refreshTokens.userId, user.id));
 }
 
 // ─── Refresh token store ──────────────────────────────────────────────────────

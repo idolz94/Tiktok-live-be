@@ -27,22 +27,26 @@ router.post("/", async (req, res) => {
   try {
     const checkSign = String(req.headers["check-sign"] ?? "");
     if (!checkSign) {
+      logger.warn({ body: req.body }, "[webhook-spx] rejected: missing check-sign");
       res.status(200).json({ ok: false, message: "Missing check-sign" });
       return;
     }
 
     try {
       if (!verifySpxSign(req.body, checkSign)) {
+        logger.warn({ checkSign }, "[webhook-spx] rejected: invalid signature");
         res.status(200).json({ ok: false, message: "Invalid signature" });
         return;
       }
     } catch {
+      logger.warn({ checkSign }, "[webhook-spx] rejected: signature verification threw");
       res.status(200).json({ ok: false, message: "Invalid signature" });
       return;
     }
 
     const { tracking_no, status_code, tracking_link } = req.body as Record<string, unknown>;
     if (!tracking_no || status_code == null) {
+      logger.warn({ body: req.body }, "[webhook-spx] rejected: missing tracking_no or status_code");
       res.status(200).json({ ok: false, message: "Missing fields" });
       return;
     }
@@ -57,6 +61,7 @@ router.post("/", async (req, res) => {
       .limit(1);
 
     if (!shipment) {
+      logger.warn({ trackingNo: tracking_no }, "[webhook-spx] rejected: shipment not found");
       res.status(200).json({ ok: false, message: "Shipment not found" });
       return;
     }

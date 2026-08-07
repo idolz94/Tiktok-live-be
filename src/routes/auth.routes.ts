@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../lib/async-handler.js";
 import { ok, mutateOk } from "../lib/response.js";
-import { badRequest, unauthorized } from "../lib/api-error.js";
+import { ApiError, badRequest, unauthorized } from "../lib/api-error.js";
 
 // Strip HTML tags and null bytes to prevent XSS and injection
 function sanitizeString(value: string): string {
@@ -17,16 +17,20 @@ const sanitizedString = (schema: z.ZodString) =>
 import {
   registerUser,
   loginUser,
+  resetPasswordWithTikTok,
   signAccessToken,
   signRefreshToken,
   saveRefreshToken,
   rotateRefreshToken,
   revokeRefreshToken,
   findOrCreateOAuthUser,
-  getUserRole,
+  getActiveUserRole,
 } from "../services/auth.service.js";
-import { bootstrapAccountContext } from "../services/account.service.js";
-import { createTikTokChannel } from "../services/tiktok-channels.service.js";
+import { bootstrapAccountContext, getShopActivityFlags } from "../services/account.service.js";
+import {
+  createTikTokChannel,
+  listTikTokChannelsWithBackfill,
+} from "../services/tiktok-channels.service.js";
 import { env } from "../config/env.js";
 import { rateLimit } from "../middlewares/rate-limit.js";
 
@@ -128,12 +132,37 @@ const loginSchema = z.object({
   password: z.string().min(1, "Vui lòng nhập mật khẩu").max(128),
 });
 
+const resetPasswordSchema = z.object({
+  username: sanitizedString(z.string().min(1, "Vui lòng nhập tên tài khoản").max(50)),
+  tiktokId: sanitizedString(z.string().min(1, "Vui lòng nhập TikTok ID").max(100)),
+  newPassword: z.string().min(6, "Mật khẩu phải có ít nhất 6 ký tự").max(128),
+});
+
 router.post(
   "/login",
   authRateLimit,
   asyncHandler(async (request, response) => {
     const body = loginSchema.parse(request.body || {});
     const user = await loginUser({ username: body.username, password: body.password });
+
+    request.authUserId = user.id;
+    const context = await bootstrapAccountContext(request);
+
+    if (!context.canUseApp) {
+      throw new ApiError(
+        403,
+        "License của bạn đã hết hạn hoặc chưa được kích hoạt. Vui lòng liên hệ hỗ trợ để gia hạn.",
+        "LICENSE_UNUSABLE",
+        { reason: context.reason },
+      );
+    }
+
+    const tiktokChannels = context.shop?.id
+      ? await listTikTokChannelsWithBackfill(context.shop.id)
+      : [];
+    const { hasOrders, hasHistory } = context.shop?.id
+      ? await getShopActivityFlags(context.shop.id)
+      : { hasOrders: false, hasHistory: false };
 
     const accessToken = signAccessToken(user.id, user.role);
     const refreshToken = signRefreshToken(user.id);
@@ -143,9 +172,29 @@ router.post(
 
     return ok(response, {
       user: { id: user.id, username: user.username, email: user.email, fullName: user.fullName },
+      profile: context.user,
+      shopMember: context.shopMember,
+      member: context.shopMember,
+      shop: context.shop,
+      license: context.license,
+      canUseApp: context.canUseApp,
+      reason: context.reason,
+      tiktokChannels,
+      hasOrders,
+      hasHistory,
       accessToken,
       refreshToken,
     });
+  }),
+);
+
+router.post(
+  "/reset-password",
+  authRateLimit,
+  asyncHandler(async (request, response) => {
+    const body = resetPasswordSchema.parse(request.body || {});
+    await resetPasswordWithTikTok(body);
+    return mutateOk(response, "Đổi mật khẩu thành công. Vui lòng đăng nhập lại.", null);
   }),
 );
 
@@ -164,7 +213,7 @@ router.post(
     if (!token) throw unauthorized("Refresh token không tồn tại.");
 
     const { userId, newRefreshToken } = await rotateRefreshToken(token);
-    const role = await getUserRole(userId);
+    const role = await getActiveUserRole(userId);
     const newAccessToken = signAccessToken(userId, role);
 
     setTokenCookies(response, newAccessToken, newRefreshToken);

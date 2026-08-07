@@ -1,5 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
-import { verifyAccessToken } from "../services/auth.service.js";
+import { getActiveUserRole, verifyAccessToken } from "../services/auth.service.js";
 import { unauthorized } from "../lib/api-error.js";
 
 function extractToken(request: Request): string {
@@ -12,7 +12,7 @@ function extractToken(request: Request): string {
   return "";
 }
 
-export function requireAuth(request: Request, _response: Response, next: NextFunction) {
+export async function requireAuth(request: Request, _response: Response, next: NextFunction) {
   try {
     const token = extractToken(request);
     if (!token) throw unauthorized();
@@ -22,7 +22,7 @@ export function requireAuth(request: Request, _response: Response, next: NextFun
 
     request.authToken = token;
     request.authUserId = payload.sub;
-    request.authUserRole = payload.role ?? "user";
+    request.authUserRole = await getActiveUserRole(payload.sub);
     next();
   } catch (error) {
     next(error);

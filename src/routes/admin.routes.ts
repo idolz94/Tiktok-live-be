@@ -8,7 +8,7 @@ import { requireAdmin, requireManager } from "../middlewares/require-role.js";
 import { activateLicenseFromPayment, getCurrentLicense, changeLicenseTier } from "../services/license.service.js";
 import { seedLicensePlans } from "../db/seed-license-plans.js";
 import { changeUserPassword } from "../services/auth.service.js";
-import { searchUsers, getUserDetail } from "../services/admin.service.js";
+import { searchUsers, getUserDetail, updateUserStatus } from "../services/admin.service.js";
 
 const router = Router();
 
@@ -111,6 +111,23 @@ router.get(
     const query = searchUsersSchema.parse(request.query ?? {});
     const result = await searchUsers(query);
     return ok(response, result);
+  }),
+);
+
+const updateUserStatusSchema = z.object({
+  status: z.enum(["active", "locked"]),
+});
+
+router.patch(
+  "/users/:userId/status",
+  requireAuth,
+  requireManager,
+  asyncHandler(async (request, response) => {
+    const userId = String(request.params.userId);
+    const body = updateUserStatusSchema.parse(request.body || {});
+    const user = await updateUserStatus(userId, body.status);
+    if (!user) throw notFound("Không tìm thấy người dùng.");
+    return ok(response, { user });
   }),
 );
 

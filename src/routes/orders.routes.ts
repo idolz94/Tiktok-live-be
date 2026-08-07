@@ -22,6 +22,7 @@ import {
   removeOrderItem,
   submitManualShipping,
   updateOrder,
+  updateSpxShipment,
   updateOrderDepositStatus,
   updateOrderStatus,
   updateOrderItem,
@@ -98,6 +99,20 @@ const submitSpxSchema = z.object({
   voucherCode: z.string().trim().min(1).optional(),
   customerAddressId: z.string().uuid().optional(),
   codCollection: z.union([z.literal(0), z.literal(1)]).optional(),
+});
+
+const updateSpxSchema = submitSpxSchema.pick({
+  serviceType: true,
+  pickupTimeRangeId: true,
+  pickupTime: true,
+  parcelWeightGram: true,
+  parcelLengthCm: true,
+  parcelWidthCm: true,
+  parcelHeightCm: true,
+  parcelItemName: true,
+  voucherCode: true,
+  note: true,
+  customerAddressId: true,
 });
 
 const manualShippingSchema = z.object({
@@ -419,6 +434,32 @@ router.post(
     });
 
     return mutateOk(response, "Tạo vận đơn SPX thành công.", { shipping: result });
+  }),
+);
+
+router.patch(
+  "/:orderId/shipping/spx",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const body = updateSpxSchema.parse(request.body || {});
+
+    const result = await updateSpxShipment({
+      shopId: context.shop.id,
+      orderId: String(request.params.orderId),
+      serviceType: body.serviceType,
+      pickupTimeRangeId: body.pickupTimeRangeId,
+      pickupTime: body.pickupTime,
+      parcelWeightGram: body.parcelWeightGram,
+      parcelLengthCm: body.parcelLengthCm,
+      parcelWidthCm: body.parcelWidthCm,
+      parcelHeightCm: body.parcelHeightCm,
+      parcelItemName: body.parcelItemName,
+      voucherCode: body.voucherCode,
+      note: body.note,
+      customerAddressId: body.customerAddressId,
+    });
+
+    return mutateOk(response, "Cập nhật vận đơn SPX thành công.", { shipping: result });
   }),
 );
 

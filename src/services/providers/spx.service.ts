@@ -132,6 +132,38 @@ export type SpxCreateOrderResult = {
   pickupTime?: number;
 };
 
+export type SpxUpdateOrderParams = {
+  environment: string;
+  userId: number;
+  userSecret: string;
+  trackingNo: string;
+  serviceType: 1 | 2;
+  collectType: 1 | 2;
+  paymentRole: 1 | 2;
+  highValueProcessingCollection: 0 | 1;
+  codAmount: number;
+  declaredValue?: number;
+  senderName: string;
+  senderPhone: string;
+  senderState: string;
+  senderCity: string;
+  senderDetailAddress: string;
+  deliverName: string;
+  deliverPhone: string;
+  deliverState: string;
+  deliverCity: string;
+  deliverDetailAddress: string;
+  pickupTimeRangeId?: number;
+  pickupTime?: number;
+  parcelWeightGram?: number;
+  parcelLengthCm?: number;
+  parcelWidthCm?: number;
+  parcelHeightCm?: number;
+  parcelItemName?: string;
+  voucherCode?: string;
+  note?: string;
+};
+
 export async function spxCreateOrder(params: SpxCreateOrderParams): Promise<SpxCreateOrderResult> {
   const isCod = params.codAmount > 0;
   const insuredValue = params.declaredValue ?? 0;
@@ -214,6 +246,67 @@ export async function spxCreateOrder(params: SpxCreateOrderParams): Promise<SpxC
     providerShippingFee: Number(first["estimated_shipping_fee"] ?? 0),
     pickupTime: first["pickup_time"] ? Number(first["pickup_time"]) : undefined,
   };
+}
+
+export async function spxUpdateOrder(params: SpxUpdateOrderParams): Promise<void> {
+  const isCod = params.codAmount > 0;
+  const insuredValue = params.declaredValue ?? 0;
+  const highValue = insuredValue >= 3_000_000 ? 1 : params.highValueProcessingCollection;
+
+  const order: Record<string, unknown> = {
+    tracking_no: params.trackingNo,
+    sender_info: {
+      sender_name: params.senderName,
+      sender_phone: toE164VN(params.senderPhone),
+      sender_state: params.senderState,
+      sender_city: params.senderCity,
+      sender_detail_address: params.senderDetailAddress,
+      sender_address_version: 2,
+    },
+    deliver_info: {
+      deliver_name: params.deliverName,
+      deliver_phone: toE164VN(params.deliverPhone),
+      deliver_state: params.deliverState,
+      deliver_city: params.deliverCity,
+      deliver_detail_address: params.deliverDetailAddress,
+      deliver_address_version: 2,
+    },
+    base_info: { service_type: params.serviceType },
+    fulfillment_info: {
+      collect_type: params.collectType,
+      payment_role: params.paymentRole,
+      high_value_processing_collection: highValue,
+      cod_collection: isCod ? 1 : 0,
+      cod_amount: isCod ? params.codAmount : 0,
+      ...(params.collectType === 1 && params.pickupTime ? { pickup_time: params.pickupTime } : {}),
+      ...(params.collectType === 1 && params.pickupTimeRangeId ? { pickup_time_range_id: params.pickupTimeRangeId } : {}),
+      ...(params.voucherCode ? { voucher_code: params.voucherCode } : {}),
+      ...(params.note !== undefined ? { note: params.note } : {}),
+    },
+    parcel_info: {
+      parcel_weight: (params.parcelWeightGram ?? 300) / 1000,
+      parcel_length: params.parcelLengthCm ?? 0,
+      parcel_width: params.parcelWidthCm ?? 0,
+      parcel_height: params.parcelHeightCm ?? 0,
+      parcel_item_name: params.parcelItemName ?? "Hàng hóa",
+      parcel_item_quantity: 1,
+      express_insured_value: insuredValue,
+    },
+  };
+
+  const data = await spxPost("/open/api/v1/order/batch_update_order", params.environment, {
+    user_id: params.userId,
+    user_secret: params.userSecret,
+    orders: [order],
+  }) as Record<string, unknown> | null;
+
+  const failList = data?.["fail_list"] as Array<Record<string, unknown>> | undefined;
+  if (failList && failList.length > 0) {
+    const fail = failList[0];
+    const code = Number(fail["ret_code"] ?? fail["error_code"] ?? 0);
+    const msg = getSpxErrorMessage(code, String(fail["message"] ?? fail["debug_msg"] ?? "SPX cập nhật đơn thất bại."));
+    throw new ApiError(422, msg, "SPX_UPDATE_FAILED", { errorCode: code, trackingNo: params.trackingNo });
+  }
 }
 
 export type SpxTrackingResult = {

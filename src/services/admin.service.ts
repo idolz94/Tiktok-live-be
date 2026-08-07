@@ -1,6 +1,6 @@
-import { and, desc, eq, ilike, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, ne, sql } from "drizzle-orm";
 import { db } from "../lib/db.js";
-import { shopLicenses, shops, users } from "../db/schema/index.js";
+import { refreshTokens, shopLicenses, shops, users } from "../db/schema/index.js";
 
 // ─── Search users ─────────────────────────────────────────────────────────────
 
@@ -16,12 +16,13 @@ export async function searchUsers({
   const limitCapped = Math.min(limit, 100);
   const offset = (page - 1) * limitCapped;
   const pattern = `%${username.trim()}%`;
+  const where = and(ilike(users.username, pattern), ne(users.role, "admin"));
 
   // Count matching users
   const [{ total }] = await db
     .select({ total: sql<number>`count(*)::int` })
     .from(users)
-    .where(ilike(users.username, pattern));
+    .where(where);
 
   if (total === 0) {
     return { users: [], total: 0, page, limit: limitCapped };
@@ -39,7 +40,7 @@ export async function searchUsers({
       createdAt: users.createdAt,
     })
     .from(users)
-    .where(ilike(users.username, pattern))
+    .where(where)
     .orderBy(desc(users.createdAt))
     .limit(limitCapped)
     .offset(offset);
@@ -121,6 +122,28 @@ export async function searchUsers({
 }
 
 // ─── User detail ──────────────────────────────────────────────────────────────
+
+export async function updateUserStatus(userId: string, status: "active" | "locked") {
+  const [user] = await db
+    .update(users)
+    .set({ status, updatedAt: new Date() })
+    .where(eq(users.id, userId))
+    .returning({
+      id: users.id,
+      username: users.username,
+      email: users.email,
+      phone: users.phone,
+      fullName: users.fullName,
+      status: users.status,
+      createdAt: users.createdAt,
+    });
+
+  if (user && status === "locked") {
+    await db.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
+  }
+
+  return user ?? null;
+}
 
 export async function getUserDetail(userId: string) {
   const [user] = await db

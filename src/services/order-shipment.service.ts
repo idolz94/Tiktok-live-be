@@ -1,12 +1,15 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { db } from "../lib/db.js";
-import { orders, orderItems, orderShipments, customerAddresses, shopAddresses } from "../db/schema/index.js";
+import { orders, orderItems, orderShipments, customerAddresses, shopAddresses, shipmentEvents } from "../db/schema/index.js";
 import { badRequest } from "../lib/api-error.js";
 import { assertOrderInShop, toMoney, reconcileOrderAmounts } from "./order-core.service.js";
 import { getShippingProviderAdapter, normalizeShippingProviderCode } from "./providers/registry.js";
 import { spxListVouchersForShop } from "./providers/spx.adapter.js";
 import { getSpxCredentials } from "./providers/credentials.js";
-import { spxGetLabel } from "./providers/spx.service.js";
+import { spxGetLabel, spxUpdateOrder } from "./providers/spx.service.js";
+
+const SPX_EDIT_EVENT_TYPE = "spx_order_updated";
+const SPX_EDIT_LIMIT = 3;
 
 export type GetShippingFeeParams = {
   shopId: string;
@@ -395,6 +398,149 @@ export async function createSpxShipment(params: CreateSpxShipmentParams) {
   });
 
   return { ...result, orderId: params.orderId };
+}
+
+export type UpdateSpxShipmentParams = {
+  shopId: string;
+  orderId: string;
+  serviceType: 1 | 2;
+  pickupTimeRangeId?: number;
+  pickupTime?: number;
+  parcelWeightGram?: number;
+  parcelLengthCm?: number;
+  parcelWidthCm?: number;
+  parcelHeightCm?: number;
+  parcelItemName?: string;
+  voucherCode?: string;
+  note?: string;
+  customerAddressId?: string;
+};
+
+export async function updateSpxShipment(params: UpdateSpxShipmentParams) {
+  const order = await assertOrderInShop(params.orderId, params.shopId);
+  const shipment = await getCurrentShipment(params.orderId);
+  if (!shipment) throw badRequest("Đơn hàng chưa có vận đơn để cập nhật.");
+  if (normalizeShippingProviderCode(shipment.providerCode) !== "spx") {
+    throw badRequest("Vận đơn này không phải SPX.");
+  }
+
+  const trackingNo = shipment.spxTrackingNo ?? shipment.trackingLabel;
+  if (!trackingNo) throw badRequest("Vận đơn SPX chưa có mã tracking.");
+
+  const [editCountRow] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(shipmentEvents)
+    .where(and(eq(shipmentEvents.shipmentId, shipment.id), eq(shipmentEvents.eventType, SPX_EDIT_EVENT_TYPE)));
+  const editCount = editCountRow?.count ?? 0;
+  if (editCount >= SPX_EDIT_LIMIT) {
+    throw badRequest(`Đơn hàng SPX đã đạt giới hạn chỉnh sửa ${SPX_EDIT_LIMIT} lần.`);
+  }
+
+  const addrId = params.customerAddressId ?? order.customerAddressId;
+  const receiverRows = addrId
+    ? await db.select().from(customerAddresses).where(eq(customerAddresses.id, addrId)).limit(1)
+    : [];
+  const receiver = receiverRows[0];
+  const receiverName = receiver?.name ?? shipment.receiverName ?? "";
+  const receiverPhone = receiver?.phone ?? shipment.receiverPhone ?? "";
+  const receiverProvince = receiver?.province ?? shipment.receiverProvince ?? "";
+  const receiverDistrict = receiver?.district ?? shipment.receiverDistrict ?? "";
+  const receiverWard = receiver?.ward ?? shipment.receiverWard ?? "";
+  const receiverDetailAddress = shipment.receiverDetailAddress?.trim() || receiver?.address?.trim() || "";
+  if (!receiverDetailAddress) throw badRequest("Địa chỉ chi tiết người nhận không được để trống.");
+
+  const creds = await getSpxCredentials(params.shopId);
+  await spxUpdateOrder({
+    environment: creds.environment,
+    userId: creds.userId,
+    userSecret: creds.userSecret,
+    trackingNo,
+    serviceType: params.serviceType,
+    collectType: shipment.collectType === 2 ? 2 : 1,
+    paymentRole: 1,
+    highValueProcessingCollection: 0,
+    codAmount: order.codAmount ?? 0,
+    declaredValue: shipment.declaredValue ?? undefined,
+    senderName: shipment.senderName ?? "",
+    senderPhone: shipment.senderPhone ?? "",
+    senderState: shipment.senderProvince ?? "",
+    senderCity: shipment.senderWard ?? "",
+    senderDetailAddress: shipment.senderDetailAddress ?? "",
+    deliverName: receiverName,
+    deliverPhone: receiverPhone,
+    deliverState: receiverProvince,
+    deliverCity: receiverWard,
+    deliverDetailAddress: receiverDetailAddress,
+    pickupTimeRangeId: params.pickupTimeRangeId ?? shipment.pickupTimeRangeId ?? undefined,
+    pickupTime: params.pickupTime ?? shipment.pickupTime ?? undefined,
+    parcelWeightGram: params.parcelWeightGram ?? shipment.parcelWeightGram ?? undefined,
+    parcelLengthCm: params.parcelLengthCm ?? shipment.parcelLengthCm ?? undefined,
+    parcelWidthCm: params.parcelWidthCm ?? shipment.parcelWidthCm ?? undefined,
+    parcelHeightCm: params.parcelHeightCm ?? shipment.parcelHeightCm ?? undefined,
+    parcelItemName: params.parcelItemName ?? shipment.parcelItemName ?? undefined,
+    voucherCode: params.voucherCode,
+    note: params.note,
+  });
+
+  const now = new Date();
+  await db
+    .update(orderShipments)
+    .set({
+      pickupTimeRangeId: params.pickupTimeRangeId ?? shipment.pickupTimeRangeId,
+      pickupTime: params.pickupTime ?? shipment.pickupTime,
+      parcelWeightGram: params.parcelWeightGram ?? shipment.parcelWeightGram,
+      parcelLengthCm: params.parcelLengthCm ?? shipment.parcelLengthCm,
+      parcelWidthCm: params.parcelWidthCm ?? shipment.parcelWidthCm,
+      parcelHeightCm: params.parcelHeightCm ?? shipment.parcelHeightCm,
+      parcelItemName: params.parcelItemName ?? shipment.parcelItemName,
+      ...(receiver
+        ? {
+            receiverName,
+            receiverPhone,
+            receiverProvince,
+            receiverDistrict,
+            receiverWard,
+            receiverDetailAddress,
+          }
+        : {}),
+      updatedAt: now,
+    })
+    .where(eq(orderShipments.id, shipment.id));
+
+  await db
+    .update(orders)
+    .set({ ...(params.note !== undefined ? { note: params.note } : {}), ...(addrId ? { customerAddressId: addrId } : {}), updatedAt: now })
+    .where(and(eq(orders.id, params.orderId), eq(orders.shopId, params.shopId)));
+
+  const nextEditCount = editCount + 1;
+  await db.insert(shipmentEvents).values({
+    shipmentId: shipment.id,
+    orderId: params.orderId,
+    shopId: params.shopId,
+    eventType: SPX_EDIT_EVENT_TYPE,
+    fromStatus: shipment.status,
+    toStatus: shipment.status,
+    payload: {
+      pickupTimeRangeId: params.pickupTimeRangeId ?? null,
+      pickupTime: params.pickupTime ?? null,
+      parcelWeightGram: params.parcelWeightGram ?? null,
+      parcelLengthCm: params.parcelLengthCm ?? null,
+      parcelWidthCm: params.parcelWidthCm ?? null,
+      parcelHeightCm: params.parcelHeightCm ?? null,
+      parcelItemName: params.parcelItemName ?? null,
+      voucherCode: params.voucherCode ?? null,
+      noteChanged: params.note !== undefined,
+    },
+  });
+
+  return {
+    ...shipment,
+    ...params,
+    updatedAt: now,
+    spxEditCount: nextEditCount,
+    spxEditLimit: SPX_EDIT_LIMIT,
+    spxEditRemaining: Math.max(0, SPX_EDIT_LIMIT - nextEditCount),
+  };
 }
 
 export async function getSpxShipmentLabel(params: { shopId: string; orderId: string }) {
