@@ -215,6 +215,50 @@ export async function listOrders(shopId: string, shippingStatus?: string, status
   return attachProducts(rows);
 }
 
+export async function listOrdersLight(shopId: string, shippingStatus?: string, status?: string, limit = 100, offset = 0) {
+  const conditions = [eq(orders.shopId, shopId)];
+
+  if (shippingStatus) {
+    const statuses = shippingStatus.split(",").map(s => s.trim()).filter(Boolean);
+    if (statuses.length === 1) {
+      conditions.push(eq(orders.shippingStatus, statuses[0]));
+    } else if (statuses.length > 1) {
+      conditions.push(inArray(orders.shippingStatus, statuses));
+    }
+  }
+
+  if (status) {
+    conditions.push(eq(orders.status, status));
+  }
+
+  return db
+    .select({
+      id: orders.id,
+      orderCode: orders.orderCode,
+      status: orders.status,
+      shippingStatus: orders.shippingStatus,
+      depositStatus: orders.depositStatus,
+      paymentStatus: orders.paymentStatus,
+      totalAmount: orders.totalAmount,
+      codAmount: orders.codAmount,
+      customerName: orders.customerName,
+      customerTiktokUsername: orders.customerTiktokUsername,
+      customerAvatarUrl: orders.customerAvatarUrl,
+      color: orders.color,
+      note: orders.note,
+      providerCode: orders.providerCode,
+      liveSessionId: orders.liveSessionId,
+      customerId: orders.customerId,
+      createdAt: orders.createdAt,
+      updatedAt: orders.updatedAt,
+    })
+    .from(orders)
+    .where(and(...conditions))
+    .orderBy(sql`${orders.createdAt} desc`)
+    .limit(limit)
+    .offset(offset);
+}
+
 export async function createOrderFromComment({
   shopId,
   userId,

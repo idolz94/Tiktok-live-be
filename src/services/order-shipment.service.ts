@@ -10,6 +10,8 @@ import { spxGetLabel, spxUpdateOrder } from "./providers/spx.service.js";
 
 const SPX_EDIT_EVENT_TYPE = "spx_order_updated";
 const SPX_EDIT_LIMIT = 3;
+// ponytail: SPX label links expire ~30min per docs; revisit if SPX ever returns a real expires_at in the response
+const SPX_LABEL_TTL_MS = 30 * 60 * 1000;
 
 export type GetShippingFeeParams = {
   shopId: string;
@@ -270,6 +272,7 @@ export type CreateSpxShipmentParams = {
   allowTryOn?: 0 | 1;
   allowPartialDelivery?: 0 | 1;
   voucherCode?: string;
+  voucherAmount?: number;
   customerAddressId?: string;
   codCollection?: 0 | 1;
 };
@@ -317,7 +320,8 @@ export async function createSpxShipment(params: CreateSpxShipmentParams) {
     .from(orderItems)
     .where(eq(orderItems.orderId, params.orderId));
   const subtotalAmount = items.reduce((sum, item) => sum + toMoney(item.price) * (item.quantity ?? 1), 0);
-  const amounts = reconcileOrderAmounts({ ...order, subtotalAmount });
+  const discountAmount = toMoney(params.voucherAmount ?? order.discountAmount);
+  const amounts = reconcileOrderAmounts({ ...order, subtotalAmount, discountAmount });
   await db.update(orders).set({ ...amounts, customerAddressId: addrId, updatedAt: new Date() }).where(and(eq(orders.id, params.orderId), eq(orders.shopId, params.shopId)));
 
   const submitParams = {
@@ -412,6 +416,7 @@ export type UpdateSpxShipmentParams = {
   parcelHeightCm?: number;
   parcelItemName?: string;
   voucherCode?: string;
+  voucherAmount?: number;
   note?: string;
   customerAddressId?: string;
 };
@@ -507,9 +512,16 @@ export async function updateSpxShipment(params: UpdateSpxShipmentParams) {
     })
     .where(eq(orderShipments.id, shipment.id));
 
+  const nextOrderPatch = {
+    ...(params.note !== undefined ? { note: params.note } : {}),
+    ...(addrId ? { customerAddressId: addrId } : {}),
+    ...(params.voucherAmount !== undefined ? reconcileOrderAmounts({ ...order, discountAmount: toMoney(params.voucherAmount) }) : {}),
+    updatedAt: now,
+  };
+
   await db
     .update(orders)
-    .set({ ...(params.note !== undefined ? { note: params.note } : {}), ...(addrId ? { customerAddressId: addrId } : {}), updatedAt: now })
+    .set(nextOrderPatch)
     .where(and(eq(orders.id, params.orderId), eq(orders.shopId, params.shopId)));
 
   const nextEditCount = editCount + 1;
@@ -574,7 +586,7 @@ export async function getSpxShipmentLabel(params: { shopId: string; orderId: str
     trackingNo,
   });
 
-  const newExpiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  const newExpiresAt = new Date(now.getTime() + SPX_LABEL_TTL_MS);
   await db
     .update(orderShipments)
     .set({ labelUrl: labelResult.labelUrl, labelExpiresAt: newExpiresAt, updatedAt: now })
@@ -798,10 +810,9 @@ export async function cancelShipment(params: { shopId: string; orderId: string; 
     return { providerCode: "manual", status: "cancelled", logId: null };
   }
 
-  if (providerCode === "spx" && shipment.status !== "pending_pickup") {
-    throw badRequest(`Chỉ có thể hủy vận đơn SPX ở trạng thái chờ lấy hàng (hiện tại: ${shipment.status}).`);
-  }
-
+  // SPX is the source of truth for cancellation eligibility. Local shipment
+  // statuses can lag behind provider tracking events, so let the adapter call
+  // batch_cancel_order and surface the provider's failure when it rejects.
   const provider = getShippingProviderAdapter(providerCode);
   const result = await provider.cancel({ shopId: params.shopId, orderId: params.orderId, trackingId: params.trackingId ?? shipment.spxTrackingNo ?? shipment.trackingLabel ?? shipment.trackingCode ?? undefined });
   const cancelledAt = new Date();

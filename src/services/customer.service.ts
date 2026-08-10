@@ -171,3 +171,41 @@ export async function updateCustomerProfile({
 
   return updated;
 }
+
+export async function listCustomers(shopId: string, limit = 100, offset = 0) {
+  return db
+    .select({
+      id: customers.id,
+      tiktokUsername: customers.tiktokUsername,
+      displayName: customers.displayName,
+      avatarUrl: customers.avatarUrl,
+      phone: customers.phone,
+      customerType: customers.customerType,
+      totalOrders: customers.totalOrders,
+      totalSpent: customers.totalSpent,
+      lastOrderAt: customers.lastOrderAt,
+      createdAt: customers.createdAt,
+    })
+    .from(customers)
+    .where(eq(customers.shopId, shopId))
+    .orderBy(customers.createdAt)
+    .limit(limit)
+    .offset(offset);
+}
+
+export async function listCustomerOrders(shopId: string, customerId: string, limit = 100, offset = 0) {
+  return db
+    .select({
+      id: orders.id,
+      orderCode: orders.orderCode,
+      status: orders.status,
+      shippingStatus: orders.shippingStatus,
+      totalAmount: orders.totalAmount,
+      createdAt: orders.createdAt,
+    })
+    .from(orders)
+    .where(and(eq(orders.shopId, shopId), eq(orders.customerId, customerId)))
+    .orderBy(orders.createdAt)
+    .limit(limit)
+    .offset(offset);
+}

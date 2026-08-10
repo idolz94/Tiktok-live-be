@@ -30,6 +30,13 @@ export type ShippingSubmitResult = {
   rawResponse?: unknown;
 };
 
+export type ShippingTrackingRoute = {
+  status: string;
+  statusCode: string;
+  message: string;
+  timestamp: number;
+};
+
 export type ShippingTrackingResult = {
   providerCode: ShippingProviderCode;
   trackingCode?: string | null;
@@ -38,6 +45,7 @@ export type ShippingTrackingResult = {
   statusCode?: string | null;
   statusText?: string | null;
   message?: string | null;
+  routes?: ShippingTrackingRoute[] | null;
   raw?: unknown;
 };
 

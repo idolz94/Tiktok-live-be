@@ -170,6 +170,7 @@ export function createSpxAdapter(): ShippingProviderAdapter {
         statusCode: String(result.statusCode),
         statusText: result.statusText,
         message: null,
+        routes: result.routes ?? [],
         raw: result,
       };
     },

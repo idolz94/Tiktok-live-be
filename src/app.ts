@@ -22,6 +22,7 @@ import shopSettingsRoutes from "./routes/shop-settings.routes.js";
 import productPresetsRoutes from "./routes/product-presets.routes.js";
 import webhookSpxRoutes from "./routes/webhook-spx.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
+import shipmentsRoutes from "./routes/shipments.routes.js";
 
 const allowedOrigins = env.clientOrigin
   .split(",")
@@ -80,6 +81,7 @@ export function createApp() {
   app.use("/api/orders", ordersRoutes);
   app.use("/api/customers", customersRoutes);
   app.use("/api/customers/:customerId/addresses", customerAddressesRoutes);
+  app.use("/api/shipments", shipmentsRoutes);
   app.use("/api/me/shop-addresses", shopAddressesRoutes);
   app.use("/api/live-comments", liveCommentsRoutes);
   app.use("/api/live-sessions", liveSessionsRoutes);

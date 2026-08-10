@@ -16,7 +16,7 @@ import {
   getSpxTimeslots,
   listSpxVouchers,
   refreshShippingStatus,
-  listOrders,
+  listOrdersLight,
   getOrderById,
   getOrderStats,
   removeOrderItem,
@@ -97,6 +97,7 @@ const submitSpxSchema = z.object({
   allowTryOn: z.union([z.literal(0), z.literal(1)]).optional(),
   allowPartialDelivery: z.union([z.literal(0), z.literal(1)]).optional(),
   voucherCode: z.string().trim().min(1).optional(),
+  voucherAmount: z.number().int().nonnegative().optional(),
   customerAddressId: z.string().uuid().optional(),
   codCollection: z.union([z.literal(0), z.literal(1)]).optional(),
 });
@@ -111,6 +112,7 @@ const updateSpxSchema = submitSpxSchema.pick({
   parcelHeightCm: true,
   parcelItemName: true,
   voucherCode: true,
+  voucherAmount: true,
   note: true,
   customerAddressId: true,
 });
@@ -184,7 +186,7 @@ router.get(
     const status = typeof request.query.status === "string" ? statusSchema.shape.status.parse(request.query.status) : undefined;
     const limit = request.query.limit ? Math.min(Number(request.query.limit), 200) : 100;
     const offset = request.query.offset ? Number(request.query.offset) : 0;
-    const orders = await listOrders(context.shop.id, shippingStatus, status, limit, offset);
+    const orders = await listOrdersLight(context.shop.id, shippingStatus, status, limit, offset);
     return ok(response, { orders });
   }),
 );
@@ -429,6 +431,7 @@ router.post(
       allowTryOn: body.allowTryOn,
       allowPartialDelivery: body.allowPartialDelivery,
       voucherCode: body.voucherCode,
+      voucherAmount: body.voucherAmount,
       customerAddressId: body.customerAddressId,
       codCollection: body.codCollection,
     });
@@ -455,6 +458,7 @@ router.patch(
       parcelHeightCm: body.parcelHeightCm,
       parcelItemName: body.parcelItemName,
       voucherCode: body.voucherCode,
+      voucherAmount: body.voucherAmount,
       note: body.note,
       customerAddressId: body.customerAddressId,
     });

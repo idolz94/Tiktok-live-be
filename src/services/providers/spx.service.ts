@@ -314,6 +314,7 @@ export type SpxTrackingResult = {
   trackingLink: string | null;
   statusCode: number;
   statusText: string;
+  routes: Array<{ status: string; statusCode: string; message: string; timestamp: number }>;
 };
 
 export async function spxGetTracking(params: { environment: string; userId: number; userSecret: string; trackingNo: string }): Promise<SpxTrackingResult> {
@@ -322,11 +323,18 @@ export async function spxGetTracking(params: { environment: string; userId: numb
   const orders = data["orders"] as Array<Record<string, unknown>> | undefined;
   const first = orders?.[0];
   if (!first) throw new ApiError(404, "SPX không tìm thấy đơn hàng.", "SPX_TRACKING_NOT_FOUND");
+  const rawRoutes = first["routes"] as Array<Record<string, unknown>> | undefined;
   return {
     trackingNo: String(first["tracking_no"] ?? params.trackingNo),
     trackingLink: first["tracking_link"] ? String(first["tracking_link"]) : null,
     statusCode: Number(first["status_code"] ?? 0),
     statusText: String(first["status_text"] ?? first["status"] ?? ""),
+    routes: (rawRoutes ?? []).map(r => ({
+      status: String(r["status"] ?? ""),
+      statusCode: String(r["status_code"] ?? ""),
+      message: String(r["message"] ?? ""),
+      timestamp: Number(r["timestamp"] ?? 0),
+    })),
   };
 }
 
