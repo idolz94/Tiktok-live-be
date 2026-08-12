@@ -215,7 +215,7 @@ export async function listOrders(shopId: string, shippingStatus?: string, status
   return attachProducts(rows);
 }
 
-export async function listOrdersLight(shopId: string, shippingStatus?: string, status?: string, limit = 100, offset = 0) {
+export async function listOrdersLight(shopId: string, shippingStatus?: string, status?: string | string[], limit = 100, offset = 0) {
   const conditions = [eq(orders.shopId, shopId)];
 
   if (shippingStatus) {
@@ -228,7 +228,12 @@ export async function listOrdersLight(shopId: string, shippingStatus?: string, s
   }
 
   if (status) {
-    conditions.push(eq(orders.status, status));
+    const statuses = (Array.isArray(status) ? status : status.split(",")).map((s) => s.trim()).filter(Boolean);
+    if (statuses.length === 1) {
+      conditions.push(eq(orders.status, statuses[0]));
+    } else if (statuses.length > 1) {
+      conditions.push(inArray(orders.status, statuses));
+    }
   }
 
   return db
@@ -257,6 +262,122 @@ export async function listOrdersLight(shopId: string, shippingStatus?: string, s
     .orderBy(sql`${orders.createdAt} desc`)
     .limit(limit)
     .offset(offset);
+}
+
+export async function listShippingOrdersWithShipment(shopId: string, limit = 100, offset = 0) {
+  const rows = await db
+    .select({
+      id: orders.id,
+      orderCode: orders.orderCode,
+      status: orders.status,
+      shippingStatus: orders.shippingStatus,
+      depositStatus: orders.depositStatus,
+      paymentStatus: orders.paymentStatus,
+      subtotalAmount: orders.subtotalAmount,
+      shippingFee: orders.shippingFee,
+      discountAmount: orders.discountAmount,
+      depositAmount: orders.depositAmount,
+      totalAmount: orders.totalAmount,
+      codAmount: orders.codAmount,
+      customerName: orders.customerName,
+      customerPhone: orders.customerPhone,
+      customerTiktokUsername: orders.customerTiktokUsername,
+      customerAvatarUrl: orders.customerAvatarUrl,
+      customerAddressId: orders.customerAddressId,
+      customerId: orders.customerId,
+      color: orders.color,
+      note: orders.note,
+      providerCode: orders.providerCode,
+      createdAt: orders.createdAt,
+      updatedAt: orders.updatedAt,
+    })
+    .from(orders)
+    .where(and(eq(orders.shopId, shopId), inArray(orders.status, ["confirmed", "success"])))
+    .orderBy(sql`${orders.createdAt} desc`)
+    .limit(limit)
+    .offset(offset);
+
+  if (!rows.length) return rows.map((o) => ({ ...o, products: [], shipment: null, customerAddressData: null, customerType: null }));
+
+  const orderIds = rows.map((o) => o.id);
+  const addressIds = [...new Set(rows.map((o) => o.customerAddressId).filter(Boolean) as string[])];
+  const customerIds = [...new Set(rows.map((o) => o.customerId).filter(Boolean) as string[])];
+
+  const [items, shipmentRows, editCountRows, addressRows, customerRows] = await Promise.all([
+    db.select().from(orderItems).where(inArray(orderItems.orderId, orderIds)),
+    db
+      .select({
+        id: orderShipments.id,
+        orderId: orderShipments.orderId,
+        trackingCode: orderShipments.trackingCode,
+        trackingLink: orderShipments.trackingLink,
+        spxTrackingNo: orderShipments.spxTrackingNo,
+      })
+      .from(orderShipments)
+      .where(inArray(orderShipments.orderId, orderIds)),
+    db
+      .select({ shipmentId: shipmentEvents.shipmentId, count: sql<number>`count(*)::int` })
+      .from(shipmentEvents)
+      .where(and(inArray(shipmentEvents.orderId, orderIds), eq(shipmentEvents.eventType, SPX_EDIT_EVENT_TYPE)))
+      .groupBy(shipmentEvents.shipmentId),
+    addressIds.length
+      ? db
+          .select({
+            id: customerAddresses.id,
+            name: customerAddresses.name,
+            address: customerAddresses.address,
+            province: customerAddresses.province,
+            district: customerAddresses.district,
+            ward: customerAddresses.ward,
+          })
+          .from(customerAddresses)
+          .where(inArray(customerAddresses.id, addressIds))
+      : Promise.resolve([]),
+    customerIds.length
+      ? db.select({ id: customers.id, customerType: customers.customerType }).from(customers).where(inArray(customers.id, customerIds))
+      : Promise.resolve([]),
+  ]);
+
+  const byOrderId = new Map<string, (typeof orderItems.$inferSelect)[]>();
+  for (const item of items) {
+    const list = byOrderId.get(item.orderId) ?? [];
+    list.push(item);
+    byOrderId.set(item.orderId, list);
+  }
+
+  const editCountByShipmentId = new Map<string, number>();
+  for (const row of editCountRows) {
+    editCountByShipmentId.set(row.shipmentId, row.count);
+  }
+
+  const shipmentByOrderId = new Map<string, typeof shipmentRows[number] & { spxEditCount: number; spxEditLimit: number; spxEditRemaining: number }>();
+  for (const s of shipmentRows) {
+    const editCount = editCountByShipmentId.get(s.id) ?? 0;
+    shipmentByOrderId.set(s.orderId, {
+      ...s,
+      spxEditCount: editCount,
+      spxEditLimit: SPX_EDIT_LIMIT,
+      spxEditRemaining: Math.max(0, SPX_EDIT_LIMIT - editCount),
+    });
+  }
+
+  const addressById = new Map<string, { id: string; name: string | null; address: string | null; province: string | null; district: string | null; ward: string | null }>();
+  for (const a of addressRows) {
+    addressById.set(a.id, a);
+  }
+
+  const customerTypeById = new Map<string, string | null>();
+  for (const c of customerRows) {
+    customerTypeById.set(c.id, c.customerType ?? null);
+  }
+
+  return rows.map((o) => ({
+    ...o,
+    products: byOrderId.get(o.id) ?? [],
+    shipment: shipmentByOrderId.get(o.id) ?? null,
+    customerAddressData: o.customerAddressId ? (addressById.get(o.customerAddressId) ?? null) : null,
+    customerType: o.customerId ? (customerTypeById.get(o.customerId) ?? null) : null,
+  }));
 }
 
 export async function createOrderFromComment({
@@ -310,7 +431,7 @@ export async function createOrderFromComment({
 
   const subtotalAmount = safePrice * safeQuantity;
   const amounts = reconcileOrderAmounts({ subtotalAmount, shippingFee: 0, discountAmount: 0, depositAmount: 0, codAmount: 0 });
-  const liveCommentId = await findDbLiveCommentId({ shopId, comment });
+  const liveCommentId = await findDbLiveCommentId({ shopId, liveSessionId, comment });
 
   const [order] = await db
     .insert(orders)
@@ -353,7 +474,7 @@ export async function createOrderFromComment({
   });
 
   void Promise.all([
-    updateLiveCommentOrder({ commentId: liveCommentId, orderId: order.id }),
+    updateLiveCommentOrder({ commentId: liveCommentId, orderId: order.id, customerId: customer?.id ?? null }),
     updateLiveSessionOrderCount(liveSessionId ?? null),
     updateCustomerAfterOrder({ customerId: customer?.id ?? null, totalAmount: amounts.totalAmount }),
   ]).catch((err) => {

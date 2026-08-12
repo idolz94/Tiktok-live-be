@@ -17,6 +17,7 @@ export type CommentIntentResult = {
   finalScore: number;
   canCreateOrder: boolean;
   isPotentialBuyer: boolean;
+  isQuestion: boolean;
   matchedReasons: string[];
 };
 
@@ -252,10 +253,12 @@ export function analyzeLiveCommentIntent(commentText: string): CommentIntentResu
       finalScore: 0,
       canCreateOrder: false,
       isPotentialBuyer: false,
+      isQuestion: false,
       matchedReasons: [],
     };
   }
 
+  const question = isQuestion(text);
   const matchedReasons: string[] = [];
 
   const spamMatches = matchKeywords(text, spamKeywords);
@@ -266,6 +269,7 @@ export function analyzeLiveCommentIntent(commentText: string): CommentIntentResu
       finalScore: 0,
       canCreateOrder: false,
       isPotentialBuyer: false,
+      isQuestion: question,
       matchedReasons: spamMatches.map((item) => `Spam: ${item}`),
     };
   }
@@ -286,8 +290,6 @@ export function analyzeLiveCommentIntent(commentText: string): CommentIntentResu
 
   let intent: CommentIntent = "normal";
   let finalScore = 0;
-
-  const question = isQuestion(text);
 
   if (buyMatches.length > 0) {
     intent = "buy";
@@ -332,6 +334,7 @@ export function analyzeLiveCommentIntent(commentText: string): CommentIntentResu
       finalScore: 0,
       canCreateOrder: false,
       isPotentialBuyer: false,
+      isQuestion: question,
       matchedReasons: [],
     };
   }
@@ -363,6 +366,7 @@ export function analyzeLiveCommentIntent(commentText: string): CommentIntentResu
     finalScore,
     canCreateOrder,
     isPotentialBuyer,
+    isQuestion: question,
     matchedReasons,
   };
 }

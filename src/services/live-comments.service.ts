@@ -64,6 +64,8 @@ export async function saveLiveComment({
     finalScore: intentResult.finalScore,
     hasNumber: hasNumber(commentText),
     canCreateOrder: intentResult.canCreateOrder,
+    isQuestion: intentResult.isQuestion,
+    matchedProductCode: matchedPreset?.code ?? null,
     isOrderCreated: Boolean(comment?.isOrderCreated || comment?.is_order_created),
     orderId: comment?.orderId || comment?.order_id || null,
     updatedAt: new Date(),
@@ -73,7 +75,7 @@ export async function saveLiveComment({
     .insert(liveComments)
     .values(payload)
     .onConflictDoUpdate({
-      target: [liveComments.shopId, liveComments.externalCommentId],
+      target: [liveComments.liveSessionId, liveComments.externalCommentId],
       set: payload,
     })
     .returning();
@@ -85,9 +87,11 @@ export async function saveLiveComment({
 
 export async function findDbLiveCommentId({
   shopId,
+  liveSessionId,
   comment,
 }: {
   shopId: string;
+  liveSessionId?: string | null;
   comment: any;
 }) {
   const commentRecord = comment as Record<string, any>;
@@ -99,10 +103,19 @@ export async function findDbLiveCommentId({
   const externalCommentId = String(commentRecord.id || commentRecord.externalCommentId || "").trim();
   if (!externalCommentId) return null;
 
+  // ponytail: external id can repeat across sessions, so scope by session when known.
+  // Without a session id we fall back to the newest shop-scoped match.
   const rows = await db
     .select({ id: liveComments.id })
     .from(liveComments)
-    .where(and(eq(liveComments.shopId, shopId), eq(liveComments.externalCommentId, externalCommentId)))
+    .where(
+      and(
+        eq(liveComments.shopId, shopId),
+        eq(liveComments.externalCommentId, externalCommentId),
+        ...(liveSessionId ? [eq(liveComments.liveSessionId, liveSessionId)] : []),
+      ),
+    )
+    .orderBy(desc(liveComments.createdAt))
     .limit(1);
 
   return rows[0]?.id ?? null;
@@ -111,15 +124,17 @@ export async function findDbLiveCommentId({
 export async function updateLiveCommentOrder({
   commentId,
   orderId,
+  customerId,
 }: {
   commentId?: string | null;
   orderId: string;
+  customerId?: string | null;
 }) {
   if (!commentId) return;
 
   await db
     .update(liveComments)
-    .set({ isOrderCreated: true, orderId, updatedAt: new Date() })
+    .set({ isOrderCreated: true, orderId, customerId: customerId ?? null, updatedAt: new Date() })
     .where(eq(liveComments.id, commentId));
 }
 

@@ -17,6 +17,7 @@ import {
   listSpxVouchers,
   refreshShippingStatus,
   listOrdersLight,
+  listShippingOrdersWithShipment,
   getOrderById,
   getOrderStats,
   removeOrderItem,
@@ -183,10 +184,22 @@ router.get(
   asyncHandler(async (request, response) => {
     const context = await requireUsableAccountContext(request);
     const shippingStatus = typeof request.query.shippingStatus === "string" ? request.query.shippingStatus : undefined;
-    const status = typeof request.query.status === "string" ? statusSchema.shape.status.parse(request.query.status) : undefined;
+    const rawStatus = typeof request.query.status === "string" ? request.query.status : undefined;
+    const statusList = rawStatus ? rawStatus.split(",").map((s) => s.trim()).filter(Boolean) : undefined;
     const limit = request.query.limit ? Math.min(Number(request.query.limit), 200) : 100;
     const offset = request.query.offset ? Number(request.query.offset) : 0;
-    const orders = await listOrdersLight(context.shop.id, shippingStatus, status, limit, offset);
+    const orders = await listOrdersLight(context.shop.id, shippingStatus, statusList, limit, offset);
+    return ok(response, { orders });
+  }),
+);
+
+router.get(
+  "/shipping",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const limit = request.query.limit ? Math.min(Number(request.query.limit), 200) : 100;
+    const offset = request.query.offset ? Number(request.query.offset) : 0;
+    const orders = await listShippingOrdersWithShipment(context.shop.id, limit, offset);
     return ok(response, { orders });
   }),
 );

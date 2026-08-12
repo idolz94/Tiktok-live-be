@@ -14,6 +14,56 @@ Fresh installs: run `0006_full_schema_rebuild.sql` then `0008`, `0009`, `0010`.
 0008_shipping_redesign_additive.sql   -- ADD COLUMN, CREATE TABLE, seed shipping_providers
 0009_shipping_redesign_backfill.sql   -- UPDATE existing rows, INSERT seed events
 0010_shipping_money_integer.sql       -- ALTER COLUMN TYPE for money fields
+0016_live_comment_analytics.sql       -- ADD COLUMN, dedupe live_comments, add analytics indexes
+```
+
+## 0016 — live comment analytics foundation
+
+Adds the fields that the TikTok live analytics foundation needs on `live_comments`:
+
+| Column | Type | Default |
+|--------|------|---------|
+| `customer_id` | uuid FK customers | `NULL` |
+| `is_question` | boolean | `false` |
+| `matched_product_code` | text | — |
+
+Before creating the session-scoped unique index, the migration removes duplicate `live_comments`
+rows that share the same non-null `live_session_id + external_comment_id`, keeping the newest row.
+
+Adds indexes for:
+
+- `live_comments.customer_id + created_at`
+- `live_comments.matched_product_code + created_at`
+
+This migration is idempotent (`IF NOT EXISTS`) and safe to re-run on a live DB.
+
+## 0016 verification queries
+
+Run after applying `0016_live_comment_analytics.sql` to verify:
+
+```sql
+-- live_comments analytics columns exist
+SELECT column_name, data_type, column_default
+FROM information_schema.columns
+WHERE table_name = 'live_comments'
+  AND column_name IN ('customer_id', 'is_question', 'matched_product_code')
+ORDER BY column_name;
+
+-- session-scoped live comment dedupe index exists
+SELECT indexname, indexdef
+FROM pg_indexes
+WHERE tablename = 'live_comments'
+  AND indexname = 'live_comments_session_external_comment_id_unique';
+
+-- analytics indexes exist
+SELECT indexname
+FROM pg_indexes
+WHERE tablename = 'live_comments'
+  AND indexname IN (
+    'live_comments_customer_id_created_at_idx',
+    'live_comments_matched_product_code_created_at_idx'
+  )
+ORDER BY indexname;
 ```
 
 ## What each migration does

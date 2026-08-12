@@ -5,6 +5,7 @@ import { ok } from "../lib/response.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { requireUsableAccountContext } from "../services/account.service.js";
 import { listLiveHistory } from "../services/history.service.js";
+import { getLiveSessionReport } from "../services/live-session-insights.service.js";
 import { endLiveSession, startLiveSession } from "../services/live-sessions.service.js";
 import { enqueueLiveEvent } from "../lib/queues.js";
 
@@ -14,6 +15,10 @@ const startSchema = z.object({
   sessionId: z.string().min(1, "Thiếu sessionId."),
   username: z.string().min(1, "Thiếu username."),
   startedAt: z.string().min(1, "Thiếu startedAt."),
+});
+
+const metricsParamsSchema = z.object({
+  sessionId: z.string().min(1, "Thiếu sessionId."),
 });
 
 const endSchema = z.object({
@@ -35,6 +40,16 @@ router.get(
     const limit = Number(request.query.limit || 100);
     const sessions = await listLiveHistory({ shopId: context.shop.id, limit });
     return ok(response, { sessions });
+  }),
+);
+
+router.get(
+  "/:sessionId/metrics",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const { sessionId } = metricsParamsSchema.parse(request.params);
+    const report = await getLiveSessionReport({ shopId: context.shop.id, sessionId });
+    return ok(response, report);
   }),
 );
 

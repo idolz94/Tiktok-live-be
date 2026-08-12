@@ -365,13 +365,11 @@ export const shipmentEvents = pgTable("shipment_events", {
 ]);
 
 // ─── live_comments ────────────────────────────────────────────────────────────
-
-
-// ─── live_comments ────────────────────────────────────────────────────────────
 export const liveComments = pgTable("live_comments", {
   id: uuid("id").primaryKey().defaultRandom(),
   shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
   liveSessionId: uuid("live_session_id").references(() => liveSessions.id),
+  customerId: uuid("customer_id").references(() => customers.id, { onDelete: "set null" }),
   externalCommentId: text("external_comment_id"),
   tiktokCommentId: text("tiktok_comment_id"),
   dedupKey: text("dedup_key"),
@@ -387,6 +385,8 @@ export const liveComments = pgTable("live_comments", {
   finalScore: real("final_score").default(0),
   hasNumber: boolean("has_number").default(false),
   canCreateOrder: boolean("can_create_order").default(false),
+  isQuestion: boolean("is_question").default(false),
+  matchedProductCode: text("matched_product_code"),
   isOrderCreated: boolean("is_order_created").default(false),
   orderId: uuid("order_id"),
   rawPayload: jsonb("raw_payload"),
