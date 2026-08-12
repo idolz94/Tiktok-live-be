@@ -12,7 +12,6 @@ import { matchPresetByComment } from "./product-presets.service.js";
 import { getCurrentLicense } from "./license.service.js";
 import logger from "../lib/logger.js";
 
-const DEFAULT_PRICE = 20000;
 const DEFAULT_QUANTITY = 1;
 const SPX_EDIT_EVENT_TYPE = "spx_order_updated";
 const SPX_EDIT_LIMIT = 3;
@@ -386,7 +385,6 @@ export async function createOrderFromComment({
   comment,
   liveSessionId,
   customerAddressId,
-  price = DEFAULT_PRICE,
   quantity,
   note = "",
 }: {
@@ -395,7 +393,6 @@ export async function createOrderFromComment({
   comment: Record<string, unknown>;
   liveSessionId?: string | null;
   customerAddressId?: string | null;
-  price?: number;
   quantity?: number;
   note?: string;
 }) {
@@ -409,12 +406,16 @@ export async function createOrderFromComment({
   if (!commentText) throw badRequest("Comment không có nội dung để tạo đơn.");
 
   const preset = await matchPresetByComment(shopId, commentText);
-  // ponytail: preset wins; otherwise try comment text, then client-passed price, then default
-  const commentPrice = parsePriceFromComment(commentText);
-  const safePrice = preset
-    ? preset.price
-    : commentPrice ?? (Number.isFinite(Number(price)) && Number(price) > 0 ? Number(price) : DEFAULT_PRICE);
-  const safeQuantity = Number.isFinite(Number(quantity)) ? Number(quantity) : parseQuantityFromComment(commentText);
+  if (!preset) {
+    throw badRequest(
+      "Không tìm thấy sản phẩm phù hợp trong preset. Vui lòng chọn hoặc tạo preset trước khi tạo đơn từ bình luận.",
+    );
+  }
+  const safePrice = preset.price;
+  const rawQuantity = Number(quantity);
+  const normalizedQuantity = Number.isFinite(rawQuantity) && rawQuantity > 0
+    ? Math.max(1, Math.min(9999, Math.floor(rawQuantity)))
+    : parseQuantityFromComment(commentText);
 
   const customer = await findOrCreateCustomer({ shopId, tiktokUsername: customerTiktokUsername, displayName, avatarUrl });
 
@@ -429,7 +430,7 @@ export async function createOrderFromComment({
         .then((rows) => rows[0] ?? null)
     : null;
 
-  const subtotalAmount = safePrice * safeQuantity;
+  const subtotalAmount = safePrice * normalizedQuantity;
   const amounts = reconcileOrderAmounts({ subtotalAmount, shippingFee: 0, discountAmount: 0, depositAmount: 0, codAmount: 0 });
   const liveCommentId = await findDbLiveCommentId({ shopId, liveSessionId, comment });
 
@@ -449,7 +450,7 @@ export async function createOrderFromComment({
       customerAvatarUrl: avatarUrl ?? null,
       customerAddressId: normalizedCustomerAddressId ?? defaultAddress?.id ?? null,
       commentText,
-      color: preset?.color ?? null,
+      color: preset.color ?? null,
       status: "draft",
       depositStatus: "unpaid",
       paymentStatus: "unpaid",
@@ -463,12 +464,12 @@ export async function createOrderFromComment({
   await db.insert(orderItems).values({
     orderId: order.id,
     shopId,
-    productCode: preset?.code ?? "",
-    productName: preset?.name || preset?.code || commentText,
+    productCode: preset.code ?? "",
+    productName: preset.name || preset.code || commentText,
     variantName: "",
-    color: preset?.color ?? "",
+    color: preset.color ?? "",
     size: "",
-    quantity: safeQuantity,
+    quantity: normalizedQuantity,
     price: safePrice,
     rawCommentText: commentText,
   });
@@ -486,7 +487,7 @@ export async function createOrderFromComment({
     message: "Tạo đơn thành công.",
     orderId: order.id,
     orderCode: order.orderCode,
-    presetMatched: preset ? { code: preset.code, name: preset.name, color: preset.color, price: preset.price } : null,
+    presetMatched: { code: preset.code, name: preset.name, color: preset.color, price: preset.price },
   };
 }
 

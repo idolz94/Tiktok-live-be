@@ -35,8 +35,8 @@ const createFromCommentSchema = z.object({
   comment: z.record(z.string(), z.unknown()),
   liveSessionId: z.string().nullish(),
   customerAddressId: z.string().nullish(),
-  price: z.number().optional(),
-  quantity: z.number().optional(),
+  price: z.number().int().nonnegative().optional(),
+  quantity: z.number().int().min(1).max(9999).optional(),
   note: z.string().optional().default(""),
 });
 
@@ -225,7 +225,6 @@ router.post(
       comment: body.comment,
       liveSessionId: body.liveSessionId,
       customerAddressId: body.customerAddressId,
-      price: body.price,
       quantity: body.quantity,
       note: body.note,
     });

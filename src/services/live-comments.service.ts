@@ -30,10 +30,11 @@ export async function saveLiveComment({
   const intentResult = analyzeLiveCommentIntent(commentText);
 
   const matchedPreset = await matchPresetByComment(shopId, commentText);
-  if (matchedPreset) {
+  if (matchedPreset && intentResult.canSuggestOrder) {
     intentResult.intent = "buy";
     intentResult.priorityLevel = "high";
-    intentResult.finalScore = 90;
+    intentResult.finalScore = Math.max(intentResult.finalScore, 90);
+    intentResult.canCreateDraftOrder = true;
     intentResult.canCreateOrder = true;
     intentResult.isPotentialBuyer = true;
   }
@@ -43,8 +44,11 @@ export async function saveLiveComment({
     intentResult.intent = "user";
     intentResult.priorityLevel = "normal";
     intentResult.finalScore = 0;
+    intentResult.canSuggestOrder = false;
+    intentResult.canCreateDraftOrder = false;
     intentResult.canCreateOrder = false;
     intentResult.isPotentialBuyer = false;
+    intentResult.matchedReasons = [];
   }
 
   const payload = {
@@ -64,7 +68,12 @@ export async function saveLiveComment({
     finalScore: intentResult.finalScore,
     hasNumber: hasNumber(commentText),
     canCreateOrder: intentResult.canCreateOrder,
+    canSuggestOrder: intentResult.canSuggestOrder,
+    canCreateDraftOrder: intentResult.canCreateDraftOrder,
+    isPotentialBuyer: intentResult.isPotentialBuyer,
     isQuestion: intentResult.isQuestion,
+    matchedReasons: intentResult.matchedReasons,
+    ruleVersion: "comment-rules-v1",
     matchedProductCode: matchedPreset?.code ?? null,
     isOrderCreated: Boolean(comment?.isOrderCreated || comment?.is_order_created),
     orderId: comment?.orderId || comment?.order_id || null,

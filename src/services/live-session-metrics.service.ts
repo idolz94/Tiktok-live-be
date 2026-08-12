@@ -8,7 +8,7 @@ import { notFound } from "../lib/api-error.js";
  * live ingest flow already persists — no AI, no stored aggregates to keep in sync.
  */
 
-// ponytail: mirrors isPotentialBuyer in utils/comment-intent.ts, which is computed but never persisted.
+// ponytail: fallback for rows persisted before is_potential_buyer existed; new rows store the flag.
 const BUYER_INTENTS = new Set([
   "buy",
   "ask_price",
@@ -52,6 +52,7 @@ export type MetricsCommentRow = {
   priorityLevel: string | null;
   finalScore: number | null;
   isOrderCreated: boolean | null;
+  isPotentialBuyer: boolean | null;
   tiktokUsername: string | null;
 };
 
@@ -111,7 +112,7 @@ export function deriveLiveSessionMetrics({
 
     if (intent === "user") hostCommentCount += 1;
     if (intent === "spam") spamCount += 1;
-    if (BUYER_INTENTS.has(intent)) potentialBuyerCount += 1;
+    if (comment.isPotentialBuyer ?? BUYER_INTENTS.has(intent)) potentialBuyerCount += 1;
     if (intent === "buy") buyCommentCount += 1;
     if (comment.isOrderCreated) createdOrderCount += 1;
 
@@ -213,6 +214,7 @@ export async function getLiveSessionMetrics({
         priorityLevel: liveComments.priorityLevel,
         finalScore: liveComments.finalScore,
         isOrderCreated: liveComments.isOrderCreated,
+        isPotentialBuyer: liveComments.isPotentialBuyer,
         tiktokUsername: liveComments.tiktokUsername,
       })
       .from(liveComments)

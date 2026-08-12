@@ -11,20 +11,26 @@ export type CommentIntent =
 
 export type PriorityLevel = "high" | "medium" | "low" | "normal";
 
-export type CommentIntentResult = {
+export type CommentRuleResult = {
   intent: CommentIntent;
   priorityLevel: PriorityLevel;
   finalScore: number;
-  canCreateOrder: boolean;
+  canSuggestOrder: boolean;
+  canCreateDraftOrder: boolean;
   isPotentialBuyer: boolean;
   isQuestion: boolean;
   matchedReasons: string[];
 };
 
+export type CommentIntentResult = CommentRuleResult & {
+  /** Legacy DB field. Keep mapped from canCreateDraftOrder until schema catches up. */
+  canCreateOrder: boolean;
+};
+
 function removeVietnameseAccents(input: string) {
   return String(input || "")
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[̀-ͯ]/g, "")
     .replace(/đ/g, "d")
     .replace(/Đ/g, "D");
 }
@@ -36,12 +42,25 @@ function normalizeComment(input: string) {
     .trim();
 }
 
+function escapeRegExp(input: string) {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function hasKeyword(text: string, keyword: string) {
+  const normalizedKeyword = normalizeComment(keyword);
+  if (normalizedKeyword.length <= 2) {
+    return new RegExp(`(^|\\s)${escapeRegExp(normalizedKeyword)}($|\\s)`).test(text);
+  }
+
+  return text.includes(normalizedKeyword);
+}
+
 function includesAny(text: string, keywords: string[]) {
-  return keywords.some((keyword) => text.includes(normalizeComment(keyword)));
+  return keywords.some((keyword) => hasKeyword(text, keyword));
 }
 
 function matchKeywords(text: string, keywords: string[]) {
-  return keywords.filter((keyword) => text.includes(normalizeComment(keyword)));
+  return keywords.filter((keyword) => hasKeyword(text, keyword));
 }
 
 const buyKeywords = [
@@ -148,10 +167,6 @@ const productKeywords = [
   "ma",
   "sản phẩm",
   "san pham",
-  "size",
-  "sz",
-  "màu",
-  "mau",
   "kg",
   "cao",
   "nặng",
@@ -184,6 +199,13 @@ const productKeywords = [
   "hon hop",
   "dùng được cho da",
   "dung duoc cho da",
+];
+
+const weakProductKeywords = [
+  "size",
+  "sz",
+  "màu",
+  "mau",
   "trắng",
   "trang",
   "đen",
@@ -221,6 +243,15 @@ const spamKeywords = [
   "ib riêng",
 ];
 
+const potentialBuyerIntents: CommentIntent[] = [
+  "buy",
+  "ask_price",
+  "ask_stock",
+  "ask_shipping",
+  "ask_product",
+  "ask_how_to_buy",
+];
+
 function isQuestion(text: string) {
   return (
     text.includes("?") ||
@@ -242,36 +273,51 @@ function isQuestion(text: string) {
   );
 }
 
+function priorityFromScore(finalScore: number): PriorityLevel {
+  if (finalScore >= 85) return "high";
+  if (finalScore >= 60) return "medium";
+  if (finalScore >= 35) return "low";
+  return "normal";
+}
+
+function withLegacyOrderFlag(result: CommentRuleResult): CommentIntentResult {
+  return {
+    ...result,
+    canCreateOrder: result.canCreateDraftOrder,
+  };
+}
+
 export function analyzeLiveCommentIntent(commentText: string): CommentIntentResult {
   const originalText = String(commentText || "").trim();
   const text = normalizeComment(originalText);
 
   if (!text) {
-    return {
+    return withLegacyOrderFlag({
       intent: "normal",
       priorityLevel: "normal",
       finalScore: 0,
-      canCreateOrder: false,
+      canSuggestOrder: false,
+      canCreateDraftOrder: false,
       isPotentialBuyer: false,
       isQuestion: false,
       matchedReasons: [],
-    };
+    });
   }
 
   const question = isQuestion(text);
-  const matchedReasons: string[] = [];
 
   const spamMatches = matchKeywords(text, spamKeywords);
   if (spamMatches.length > 0) {
-    return {
+    return withLegacyOrderFlag({
       intent: "spam",
       priorityLevel: "normal",
       finalScore: 0,
-      canCreateOrder: false,
+      canSuggestOrder: false,
+      canCreateDraftOrder: false,
       isPotentialBuyer: false,
       isQuestion: question,
       matchedReasons: spamMatches.map((item) => `Spam: ${item}`),
-    };
+    });
   }
 
   const buyMatches = matchKeywords(text, buyKeywords);
@@ -279,13 +325,16 @@ export function analyzeLiveCommentIntent(commentText: string): CommentIntentResu
   const stockMatches = matchKeywords(text, stockKeywords);
   const shippingMatches = matchKeywords(text, shippingKeywords);
   const productMatches = matchKeywords(text, productKeywords);
+  const weakProductMatches = matchKeywords(text, weakProductKeywords);
   const howToBuyMatches = matchKeywords(text, howToBuyKeywords);
+  const matchedReasons: string[] = [];
 
   for (const item of buyMatches) matchedReasons.push(`Có ý định mua: ${item}`);
   for (const item of priceMatches) matchedReasons.push(`Hỏi giá/voucher: ${item}`);
   for (const item of stockMatches) matchedReasons.push(`Hỏi tồn kho: ${item}`);
   for (const item of shippingMatches) matchedReasons.push(`Hỏi vận chuyển: ${item}`);
   for (const item of productMatches) matchedReasons.push(`Hỏi sản phẩm: ${item}`);
+  for (const item of weakProductMatches) matchedReasons.push(`Tín hiệu sản phẩm yếu: ${item}`);
   for (const item of howToBuyMatches) matchedReasons.push(`Hỏi cách mua: ${item}`);
 
   let intent: CommentIntent = "normal";
@@ -293,11 +342,11 @@ export function analyzeLiveCommentIntent(commentText: string): CommentIntentResu
 
   if (buyMatches.length > 0) {
     intent = "buy";
-    finalScore += 90;
+    finalScore = Math.max(finalScore, 90);
   }
 
   if (howToBuyMatches.length > 0) {
-    intent = "ask_how_to_buy";
+    intent = intent === "buy" ? intent : "ask_how_to_buy";
     finalScore = Math.max(finalScore, 85);
   }
 
@@ -321,52 +370,42 @@ export function analyzeLiveCommentIntent(commentText: string): CommentIntentResu
     finalScore = Math.max(finalScore, 60);
   }
 
+  if (weakProductMatches.length > 0) {
+    intent = intent === "normal" ? "ask_product" : intent;
+    // ponytail: color/size alone is useful for sorting, not enough for medium priority.
+    finalScore = Math.max(finalScore, 30);
+  }
+
   if (question && intent === "normal") {
-    intent = "ask_product";
-    finalScore = Math.max(finalScore, 45);
+    finalScore = Math.max(finalScore, 25);
     matchedReasons.push("Có dấu hiệu là câu hỏi của khách");
   }
 
   if (matchedReasons.length === 0) {
-    return {
+    return withLegacyOrderFlag({
       intent: "normal",
       priorityLevel: "normal",
       finalScore: 0,
-      canCreateOrder: false,
+      canSuggestOrder: false,
+      canCreateDraftOrder: false,
       isPotentialBuyer: false,
       isQuestion: question,
       matchedReasons: [],
-    };
+    });
   }
 
-  let priorityLevel: PriorityLevel = "normal";
+  const canSuggestOrder = intent === "buy";
+  // ponytail: product/variant/quantity validation lives in service, so base rules only suggest.
+  const canCreateDraftOrder = false;
 
-  if (finalScore >= 85) {
-    priorityLevel = "high";
-  } else if (finalScore >= 60) {
-    priorityLevel = "medium";
-  } else if (finalScore >= 35) {
-    priorityLevel = "low";
-  }
-
-  const canCreateOrder = intent === "buy";
-
-  const isPotentialBuyer = [
-    "buy",
-    "ask_price",
-    "ask_stock",
-    "ask_shipping",
-    "ask_product",
-    "ask_how_to_buy",
-  ].includes(intent);
-
-  return {
+  return withLegacyOrderFlag({
     intent,
-    priorityLevel,
+    priorityLevel: priorityFromScore(finalScore),
     finalScore,
-    canCreateOrder,
-    isPotentialBuyer,
+    canSuggestOrder,
+    canCreateDraftOrder,
+    isPotentialBuyer: potentialBuyerIntents.includes(intent),
     isQuestion: question,
     matchedReasons,
-  };
+  });
 }
