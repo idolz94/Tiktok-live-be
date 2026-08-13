@@ -158,9 +158,9 @@ describe("POST /api/orders/from-comment validation", () => {
     });
   });
 
-  it("surfaces the unmatched-preset business error without a partial write", async () => {
+  it("surfaces business errors without a partial write", async () => {
     vi.mocked(createOrderFromComment).mockRejectedValueOnce(
-      badRequest("Không tìm thấy sản phẩm phù hợp trong preset. Vui lòng chọn hoặc tạo preset trước khi tạo đơn từ bình luận."),
+      badRequest("Comment không có nội dung để tạo đơn."),
     );
 
     const { baseUrl, close } = await createTestServer();
@@ -175,6 +175,6 @@ describe("POST /api/orders/from-comment validation", () => {
 
     expect(response.status).toBe(400);
     expect(body.code).toBe("BAD_REQUEST");
-    expect(body.message).toContain("preset");
+    expect(body.message).toContain("không có nội dung");
   });
 });

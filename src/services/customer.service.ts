@@ -1,7 +1,7 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { db } from "../lib/db.js";
 import { customers, orders } from "../db/schema/index.js";
-import { notFound } from "../lib/api-error.js";
+import { forbidden, notFound } from "../lib/api-error.js";
 
 export async function findOrCreateCustomer({
   shopId,
@@ -193,7 +193,17 @@ export async function listCustomers(shopId: string, limit = 100, offset = 0) {
     .offset(offset);
 }
 
-export async function listCustomerOrders(shopId: string, customerId: string, limit = 100, offset = 0) {
+export async function listCustomerOrders(shopId: string, customerId: string, limit = 200, offset = 0) {
+  // Verify customer tồn tại và thuộc đúng shop trước khi query orders
+  const customerRows = await db
+    .select({ id: customers.id, shopId: customers.shopId })
+    .from(customers)
+    .where(eq(customers.id, customerId))
+    .limit(1);
+  const customer = customerRows[0];
+  if (!customer) throw notFound("Customer not found");
+  if (customer.shopId !== shopId) throw forbidden("Customer does not belong to your shop");
+
   return db
     .select({
       id: orders.id,
@@ -201,11 +211,12 @@ export async function listCustomerOrders(shopId: string, customerId: string, lim
       status: orders.status,
       shippingStatus: orders.shippingStatus,
       totalAmount: orders.totalAmount,
+      codAmount: orders.codAmount,
       createdAt: orders.createdAt,
     })
     .from(orders)
     .where(and(eq(orders.shopId, shopId), eq(orders.customerId, customerId)))
-    .orderBy(orders.createdAt)
+    .orderBy(desc(orders.createdAt))
     .limit(limit)
     .offset(offset);
 }

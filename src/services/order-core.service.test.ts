@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseQuantityFromComment, parsePriceFromComment } from "./order-core.service.js";
+import { parseQuantityFromComment, parsePriceFromComment, resolveFallbackCommentPrice } from "./order-core.service.js";
 
 describe("parseQuantityFromComment", () => {
   it("uses explicit quantity markers only", () => {
@@ -21,4 +21,19 @@ describe("parsePriceFromComment", () => {
     // "x6" — 6 is below 1000, not a price
     expect(parsePriceFromComment("x6")).toBeNull();
   });
+});
+
+describe("resolveFallbackCommentPrice", () => {
+  it("multiplies a small bare number by 1000", () => {
+    expect(resolveFallbackCommentPrice("cho e xem mã 47 dc k")).toBe(47000);
+    expect(resolveFallbackCommentPrice("47")).toBe(47000);
+  });
+  it("keeps parsed prices intact", () => {
+    expect(resolveFallbackCommentPrice("695k")).toBe(695000);
+    expect(resolveFallbackCommentPrice("đã săn 133k")).toBe(133000);
+  });
+  it("caps large numbers (e.g. phone numbers) to the default", () =>
+    expect(resolveFallbackCommentPrice("0912345678")).toBe(20000));
+  it("defaults to 20000 when the comment has no number", () =>
+    expect(resolveFallbackCommentPrice("Nhận về có hộp ko ạ")).toBe(20000));
 });

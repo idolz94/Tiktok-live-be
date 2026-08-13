@@ -32,7 +32,7 @@ router.get(
   "/:customerId/orders",
   asyncHandler(async (request, response) => {
     const shopId = await requireShopId(request);
-    const limit = request.query.limit ? Math.min(Number(request.query.limit), 200) : 100;
+    const limit = request.query.limit ? Math.min(Number(request.query.limit), 200) : 200;
     const offset = request.query.offset ? Number(request.query.offset) : 0;
     const orders = await listCustomerOrders(shopId, String(request.params.customerId), limit, offset);
     return ok(response, { orders });

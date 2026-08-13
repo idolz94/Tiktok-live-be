@@ -44,6 +44,15 @@ export function parsePriceFromComment(commentText: string): number | null {
   return null;
 }
 
+/** ponytail: fallback price when no preset matches — parsed price, else first number ×1000 (≤100k), else 20000 */
+export function resolveFallbackCommentPrice(commentText: string): number {
+  const fallbackNumber = commentText.match(/\d+/);
+  return (
+    parsePriceFromComment(commentText) ??
+    (fallbackNumber && Number(fallbackNumber[0]) <= 100_000 ? Number(fallbackNumber[0]) * 1000 : 20000)
+  );
+}
+
 export function toMoney(value: unknown) {
   const n = Number(value);
   return Number.isFinite(n) ? Math.round(n) : 0;
@@ -406,12 +415,8 @@ export async function createOrderFromComment({
   if (!commentText) throw badRequest("Comment không có nội dung để tạo đơn.");
 
   const preset = await matchPresetByComment(shopId, commentText);
-  if (!preset) {
-    throw badRequest(
-      "Không tìm thấy sản phẩm phù hợp trong preset. Vui lòng chọn hoặc tạo preset trước khi tạo đơn từ bình luận.",
-    );
-  }
-  const safePrice = preset.price;
+  // ponytail: no preset match → price from comment (parser, else first number ×1000, else 20000)
+  const safePrice = preset ? preset.price : resolveFallbackCommentPrice(commentText);
   const rawQuantity = Number(quantity);
   const normalizedQuantity = Number.isFinite(rawQuantity) && rawQuantity > 0
     ? Math.max(1, Math.min(9999, Math.floor(rawQuantity)))
@@ -450,7 +455,7 @@ export async function createOrderFromComment({
       customerAvatarUrl: avatarUrl ?? null,
       customerAddressId: normalizedCustomerAddressId ?? defaultAddress?.id ?? null,
       commentText,
-      color: preset.color ?? null,
+      color: preset?.color ?? null,
       status: "draft",
       depositStatus: "unpaid",
       paymentStatus: "unpaid",
@@ -464,10 +469,10 @@ export async function createOrderFromComment({
   await db.insert(orderItems).values({
     orderId: order.id,
     shopId,
-    productCode: preset.code ?? "",
-    productName: preset.name || preset.code || commentText,
+    productCode: preset?.code ?? "",
+    productName: preset?.name || preset?.code || commentText,
     variantName: "",
-    color: preset.color ?? "",
+    color: preset?.color ?? "",
     size: "",
     quantity: normalizedQuantity,
     price: safePrice,
@@ -487,7 +492,9 @@ export async function createOrderFromComment({
     message: "Tạo đơn thành công.",
     orderId: order.id,
     orderCode: order.orderCode,
-    presetMatched: { code: preset.code, name: preset.name, color: preset.color, price: preset.price },
+    presetMatched: preset
+      ? { code: preset.code, name: preset.name, color: preset.color, price: preset.price }
+      : null,
   };
 }
 
