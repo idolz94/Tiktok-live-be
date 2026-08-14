@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import ordersRoutes from "./orders.routes.js";
 import { errorHandler } from "../middlewares/error.js";
 import { badRequest } from "../lib/api-error.js";
-import { createOrderFromComment } from "../services/orders.service.js";
+import { createOrderFromComment, mergeDraftOrders } from "../services/orders.service.js";
 
 vi.mock("../services/auth.service.js", () => ({
   verifyAccessToken: vi.fn(() => ({ sub: "user-1" })),
@@ -39,6 +39,7 @@ vi.mock("../services/orders.service.js", () => ({
   listShippingOrdersWithShipment: vi.fn(),
   getOrderById: vi.fn(),
   getOrderStats: vi.fn(),
+  mergeDraftOrders: vi.fn(),
   removeOrderItem: vi.fn(),
   submitManualShipping: vi.fn(),
   updateOrder: vi.fn(),
@@ -176,5 +177,65 @@ describe("POST /api/orders/from-comment validation", () => {
     expect(response.status).toBe(400);
     expect(body.code).toBe("BAD_REQUEST");
     expect(body.message).toContain("không có nội dung");
+  });
+});
+
+describe("POST /api/orders/merge-drafts validation", () => {
+  const servers: Array<{ close: () => Promise<void> }> = [];
+
+  afterEach(async () => {
+    vi.clearAllMocks();
+    await Promise.all(servers.splice(0).map((server) => server.close()));
+  });
+
+  it.each([
+    ["empty source list", { targetOrderId: "11111111-1111-4111-8111-111111111111", sourceOrderIds: [] }],
+    ["invalid target id", { targetOrderId: "order-1", sourceOrderIds: ["22222222-2222-4222-8222-222222222222"] }],
+  ])("rejects %s before calling the service", async (_label, payload) => {
+    const { baseUrl, close } = await createTestServer();
+    servers.push({ close });
+
+    const response = await fetch(`${baseUrl}/api/orders/merge-drafts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer test-token" },
+      body: JSON.stringify(payload),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.code).toBe("VALIDATION_ERROR");
+    expect(mergeDraftOrders).not.toHaveBeenCalled();
+  });
+
+  it("merges selected draft orders for the current shop", async () => {
+    vi.mocked(mergeDraftOrders).mockResolvedValueOnce({
+      targetOrderId: "11111111-1111-4111-8111-111111111111",
+      mergedOrderIds: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"],
+      deletedOrderIds: ["22222222-2222-4222-8222-222222222222"],
+      mergedItemCount: 2,
+      order: {} as Awaited<ReturnType<typeof mergeDraftOrders>>["order"],
+    });
+
+    const { baseUrl, close } = await createTestServer();
+    servers.push({ close });
+
+    const response = await fetch(`${baseUrl}/api/orders/merge-drafts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer test-token" },
+      body: JSON.stringify({
+        targetOrderId: "11111111-1111-4111-8111-111111111111",
+        sourceOrderIds: ["22222222-2222-4222-8222-222222222222"],
+      }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.status).toBe("success");
+    expect(body.data.merge.deletedOrderIds).toEqual(["22222222-2222-4222-8222-222222222222"]);
+    expect(mergeDraftOrders).toHaveBeenCalledWith({
+      shopId: "shop-1",
+      targetOrderId: "11111111-1111-4111-8111-111111111111",
+      sourceOrderIds: ["22222222-2222-4222-8222-222222222222"],
+    });
   });
 });

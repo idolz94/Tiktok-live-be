@@ -1,6 +1,6 @@
-import { eq, and, inArray, sql, gte, lt } from "drizzle-orm";
-import { db } from "../lib/db.js";
-import { orders, orderItems, orderShipments, shipmentEvents, customerAddresses, customers } from "../db/schema/index.js";
+import { eq, and, inArray, sql, gte, lt, desc } from "drizzle-orm";
+import { db, type DbOrTx } from "../lib/db.js";
+import { orders, orderItems, orderShipments, shipmentEvents, customerAddresses, customers, liveComments } from "../db/schema/index.js";
 import { badRequest, notFound } from "../lib/api-error.js";
 import { getCommentAvatar, getCommentDisplayName, getCommentText } from "../utils/comment.js";
 import { createOrderCode } from "../utils/id.js";
@@ -75,15 +75,15 @@ export function reconcileOrderAmounts(order: {
   return { subtotalAmount, shippingFee, discountAmount, depositAmount, codAmount, totalAmount, remainingAmount };
 }
 
-export async function updateOrderAmounts(orderId: string, shopId: string) {
-  const [order] = await db.select().from(orders).where(and(eq(orders.id, orderId), eq(orders.shopId, shopId))).limit(1);
+export async function updateOrderAmounts(orderId: string, shopId: string, client: DbOrTx = db) {
+  const [order] = await client.select().from(orders).where(and(eq(orders.id, orderId), eq(orders.shopId, shopId))).limit(1);
   if (!order) throw notFound("Không tìm thấy đơn hàng.");
   // START: Tính lại subtotalAmount từ orderItems thực tế, không dùng giá trị snapshot cũ trên orders
-  const items = await db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
+  const items = await client.select().from(orderItems).where(eq(orderItems.orderId, orderId));
   const subtotalAmount = items.reduce((sum, item) => sum + toMoney(item.price) * toMoney(item.quantity), 0);
   const amounts = reconcileOrderAmounts({ ...order, subtotalAmount });
   // END: subtotalAmount từ items
-  await db.update(orders).set({ ...amounts, updatedAt: new Date() }).where(and(eq(orders.id, orderId), eq(orders.shopId, shopId)));
+  await client.update(orders).set({ ...amounts, updatedAt: new Date() }).where(and(eq(orders.id, orderId), eq(orders.shopId, shopId)));
 }
 
 async function assertOrderLimitNotExceeded(shopId: string) {
@@ -439,6 +439,62 @@ export async function createOrderFromComment({
   const amounts = reconcileOrderAmounts({ subtotalAmount, shippingFee: 0, discountAmount: 0, depositAmount: 0, codAmount: 0 });
   const liveCommentId = await findDbLiveCommentId({ shopId, liveSessionId, comment });
 
+  if (liveCommentId) {
+    const [existingComment] = await db
+      .select({ isOrderCreated: liveComments.isOrderCreated })
+      .from(liveComments)
+      .where(eq(liveComments.id, liveCommentId))
+      .limit(1);
+    if (existingComment?.isOrderCreated) throw badRequest("Comment này đã được tạo đơn.");
+  }
+
+  // ponytail: ghep don — customer da co don draft trong cung live session thi ghep item vao don do, khong tao don moi
+  if (liveSessionId && customer?.id) {
+    const [existingDraft] = await db
+      .select({ id: orders.id, orderCode: orders.orderCode })
+      .from(orders)
+      .where(
+        and(
+          eq(orders.shopId, shopId),
+          eq(orders.customerId, customer.id),
+          eq(orders.liveSessionId, liveSessionId),
+          eq(orders.status, "draft"),
+        ),
+      )
+      .orderBy(desc(orders.createdAt))
+      .limit(1);
+
+    if (existingDraft) {
+      await db.insert(orderItems).values({
+        orderId: existingDraft.id,
+        shopId,
+        productCode: preset?.code ?? "",
+        productName: preset?.name || preset?.code || commentText,
+        variantName: "",
+        color: preset?.color ?? "",
+        size: "",
+        quantity: normalizedQuantity,
+        price: safePrice,
+        rawCommentText: commentText,
+      });
+      await updateOrderAmounts(existingDraft.id, shopId);
+      // ponytail: bo qua updateLiveSessionOrderCount (khong tao don moi) va updateCustomerAfterOrder (se tang sai totalOrders)
+      void updateLiveCommentOrder({ commentId: liveCommentId, orderId: existingDraft.id, customerId: customer.id }).catch((err) => {
+        logger.error({ err }, "MERGE_ORDER_FROM_COMMENT_SIDE_EFFECT_FAILED");
+      });
+      return {
+        success: true,
+        message: `Đã ghép vào đơn ${existingDraft.orderCode}.`,
+        orderId: existingDraft.id,
+        orderCode: existingDraft.orderCode,
+        merged: true,
+        presetMatched: preset
+          ? { code: preset.code, name: preset.name, color: preset.color, price: preset.price }
+          : null,
+      };
+    }
+  }
+
   const [order] = await db
     .insert(orders)
     .values({
@@ -759,6 +815,73 @@ export async function getOrderStats({
       customers: prevCustRow[0]?.count ?? 0,
     },
   };
+}
+
+export async function mergeDraftOrders({
+  shopId,
+  targetOrderId,
+  sourceOrderIds,
+}: {
+  shopId: string;
+  targetOrderId: string;
+  sourceOrderIds: string[];
+}) {
+  const uniqueSourceOrderIds = [...new Set(sourceOrderIds)].filter((id) => id !== targetOrderId);
+  if (uniqueSourceOrderIds.length === 0) throw badRequest("Cần ít nhất 1 đơn nguồn để ghép.");
+
+  const selectedOrderIds = [targetOrderId, ...uniqueSourceOrderIds];
+
+  const result = await db.transaction(async (tx) => {
+    const selectedOrders = await tx
+      .select({ id: orders.id, customerId: orders.customerId, status: orders.status })
+      .from(orders)
+      .where(and(eq(orders.shopId, shopId), inArray(orders.id, selectedOrderIds)));
+
+    if (selectedOrders.length !== selectedOrderIds.length) throw notFound("Không tìm thấy đủ đơn hàng cần ghép.");
+
+    const targetOrder = selectedOrders.find((order) => order.id === targetOrderId);
+    if (!targetOrder) throw notFound("Không tìm thấy đơn đích.");
+    if (!targetOrder.customerId) throw badRequest("Đơn đích chưa có khách hàng.");
+
+    const invalidOrder = selectedOrders.find(
+      (order) => order.status !== "draft" || order.customerId !== targetOrder.customerId,
+    );
+    if (invalidOrder) throw badRequest("Chỉ được ghép các đơn draft cùng customer.");
+
+    const selectedShipments = await tx
+      .select({ id: orderShipments.id })
+      .from(orderShipments)
+      .where(inArray(orderShipments.orderId, selectedOrderIds))
+      .limit(1);
+    if (selectedShipments.length > 0) throw badRequest("Không được ghép đơn đã có vận đơn.");
+
+    const movedItems = await tx
+      .update(orderItems)
+      .set({ orderId: targetOrderId, updatedAt: new Date() })
+      .where(inArray(orderItems.orderId, uniqueSourceOrderIds))
+      .returning({ id: orderItems.id });
+
+    await tx
+      .update(liveComments)
+      .set({ orderId: targetOrderId, customerId: targetOrder.customerId, isOrderCreated: true, updatedAt: new Date() })
+      .where(inArray(liveComments.orderId, uniqueSourceOrderIds));
+
+    await tx.delete(orders).where(and(eq(orders.shopId, shopId), inArray(orders.id, uniqueSourceOrderIds)));
+    await updateOrderAmounts(targetOrderId, shopId, tx);
+    // ponytail: merge keeps the same customer spend, only reduces visible order count.
+    await tx
+      .update(customers)
+      .set({
+        totalOrders: sql`greatest(coalesce(${customers.totalOrders}, 0) - ${uniqueSourceOrderIds.length}, 1)`,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(customers.id, targetOrder.customerId), eq(customers.shopId, shopId)));
+
+    return { mergedOrderIds: selectedOrderIds, deletedOrderIds: uniqueSourceOrderIds, mergedItemCount: movedItems.length };
+  });
+
+  const order = await getOrderById(targetOrderId, shopId);
+  return { ...result, targetOrderId, order };
 }
 
 export async function deleteOrder({ shopId, orderId }: { shopId: string; orderId: string }) {

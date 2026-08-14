@@ -20,6 +20,7 @@ import {
   listShippingOrdersWithShipment,
   getOrderById,
   getOrderStats,
+  mergeDraftOrders,
   removeOrderItem,
   submitManualShipping,
   updateOrder,
@@ -46,6 +47,11 @@ const depositSchema = z.object({
 
 const statusSchema = z.object({
   status: z.enum(["draft", "confirmed", "packed", "shipping", "completed", "canceled", "returned"]),
+});
+
+const mergeDraftOrdersSchema = z.object({
+  targetOrderId: z.string().uuid(),
+  sourceOrderIds: z.array(z.string().uuid()).min(1).max(50),
 });
 
 const orderItemCreateSchema = z.object({
@@ -230,6 +236,20 @@ router.post(
     });
 
     return mutateCreated(response, "Tạo đơn thành công.", result);
+  }),
+);
+
+router.post(
+  "/merge-drafts",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const body = mergeDraftOrdersSchema.parse(request.body || {});
+    const result = await mergeDraftOrders({
+      shopId: context.shop.id,
+      targetOrderId: body.targetOrderId,
+      sourceOrderIds: body.sourceOrderIds,
+    });
+    return mutateOk(response, "Ghép đơn thành công.", { merge: result });
   }),
 );
 

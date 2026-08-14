@@ -29,6 +29,7 @@ GET    /api/me/bootstrap
 
 GET    /api/orders
 POST   /api/orders/from-comment
+POST   /api/orders/merge-drafts
 PATCH  /api/orders/:orderId/deposit-status
 PATCH  /api/orders/:orderId/status
 DELETE /api/orders/:orderId

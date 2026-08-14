@@ -571,6 +571,7 @@ DELETE /api/products/:productId/variants/:variantId
 GET    /api/orders
 POST   /api/orders
 POST   /api/orders/from-comment
+POST   /api/orders/merge-drafts
 GET    /api/orders/:orderId
 PATCH  /api/orders/:orderId
 DELETE /api/orders/:orderId
