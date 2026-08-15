@@ -1,5 +1,6 @@
+import { and, count, desc, eq } from "drizzle-orm";
 import { db } from "../lib/db.js";
-import { adminAuditLogs } from "../db/schema/index.js";
+import { adminAuditLogs, users } from "../db/schema/index.js";
 
 export type AuditLogBefore = unknown;
 export type AuditLogAfter = unknown;
@@ -41,4 +42,78 @@ export async function createAuditLog(input: CreateAuditLogInput) {
     .returning();
 
   return row;
+}
+
+// ─── Per-target audit log query ──────────────────────────────────────────────
+
+export async function getTargetAuditLogs(
+  targetType: string,
+  targetId: string,
+  page: number = 1,
+  limit: number = 20,
+) {
+  const limitCapped = Math.min(limit, 100);
+  const offset = (page - 1) * limitCapped;
+
+  const where = and(
+    eq(adminAuditLogs.targetType, targetType),
+    eq(adminAuditLogs.targetId, targetId),
+  );
+
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(adminAuditLogs)
+    .where(where);
+
+  const logs = total === 0
+    ? []
+    : await db
+        .select({
+          id: adminAuditLogs.id,
+          action: adminAuditLogs.action,
+          adminUserId: adminAuditLogs.adminUserId,
+          adminUsername: users.username,
+          targetType: adminAuditLogs.targetType,
+          targetId: adminAuditLogs.targetId,
+          before: adminAuditLogs.before,
+          after: adminAuditLogs.after,
+          metadata: adminAuditLogs.metadata,
+          ip: adminAuditLogs.ip,
+          userAgent: adminAuditLogs.userAgent,
+          createdAt: adminAuditLogs.createdAt,
+        })
+        .from(adminAuditLogs)
+        .leftJoin(users, eq(users.id, adminAuditLogs.adminUserId))
+        .where(where)
+        .orderBy(desc(adminAuditLogs.createdAt))
+        .limit(limitCapped)
+        .offset(offset);
+
+  const result = logs.map((row) => ({
+    id: row.id,
+    action: row.action,
+    adminUser: {
+      id: row.adminUserId,
+      username: row.adminUsername,
+    },
+    targetType: row.targetType,
+    targetId: row.targetId,
+    before: row.before,
+    after: row.after,
+    metadata: row.metadata,
+    ip: row.ip,
+    userAgent: row.userAgent,
+    createdAt: row.createdAt,
+  }));
+
+  return { logs: result, total, page, limit: limitCapped };
+}
+
+/** Backwards-compatible wrapper for per-user audit logs. */
+export async function getUserAuditLogs(
+  userId: string,
+  page: number = 1,
+  limit: number = 20,
+) {
+  return getTargetAuditLogs("user", userId, page, limit);
 }
