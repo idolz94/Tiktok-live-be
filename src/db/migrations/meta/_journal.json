@@ -57,6 +57,13 @@
       "when": 1786691600000,
       "tag": "0017_admin_audit_logs_soft_delete",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786814400000,
+      "tag": "0018_users_overrides",
+      "breakpoints": true
     }
   ]
 }

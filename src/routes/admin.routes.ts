@@ -8,7 +8,7 @@ import { requireAdmin, requireManager } from "../middlewares/require-role.js";
 import { activateLicenseFromPayment, getCurrentLicense, changeLicenseTier, searchLicenses, extendLicense, updateLicenseLimits, getLicenseUsage, getLicenseAdminDetail } from "../services/license.service.js";
 import { seedLicensePlans } from "../db/seed-license-plans.js";
 import { changeUserPassword } from "../services/auth.service.js";
-import { searchUsers, getUserDetail, updateUserStatus, updateUserRole, archiveUser } from "../services/admin.service.js";
+import { searchUsers, getUserDetail, updateUserStatus, updateUserRole, archiveUser, updateUserOverrides, OVERRIDE_FEATURE_KEYS } from "../services/admin.service.js";
 import { createAuditLog, getUserAuditLogs, getTargetAuditLogs } from "../services/admin-audit.service.js";
 
 const router = Router();
@@ -401,6 +401,40 @@ router.patch(
     });
 
     return ok(response, { user });
+  }),
+);
+
+// ─── User overrides (manager+) ───────────────────────────────────────────────
+
+const overridesSchema = z.object({
+  maxDevices: z.number().int().min(1).nullable().optional(),
+  features: z
+    .record(z.enum(OVERRIDE_FEATURE_KEYS), z.boolean().nullable())
+    .optional(),
+});
+
+router.patch(
+  "/users/:userId/overrides",
+  requireAuth,
+  requireManager,
+  asyncHandler(async (request, response) => {
+    const userId = String(request.params.userId);
+    const body = overridesSchema.parse(request.body || {});
+    const result = await updateUserOverrides(userId, body, request.authUserId!);
+    if (!result) throw notFound("Không tìm thấy người dùng.");
+
+    await createAuditLog({
+      adminUserId: request.authUserId!,
+      action: "USER_OVERRIDES_CHANGED",
+      targetType: "user",
+      targetId: userId,
+      before: result.before,
+      after: result.after,
+      ip: getRequestIp(request),
+      userAgent: getRequestUserAgent(request),
+    });
+
+    return ok(response, { user: result.user });
   }),
 );
 

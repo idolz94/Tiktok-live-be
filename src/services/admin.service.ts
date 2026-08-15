@@ -267,6 +267,7 @@ export async function getUserDetail(userId: string) {
       status: users.status,
       deletedAt: users.deletedAt,
       createdAt: users.createdAt,
+      overrides: users.overrides,
     })
     .from(users)
     .where(eq(users.id, userId));
@@ -388,4 +389,85 @@ export async function archiveUser(userId: string) {
   }
 
   return { user, beforeArchived };
+}
+
+// ─── Per-user overrides ──────────────────────────────────────────────────────
+
+export const OVERRIDE_FEATURE_KEYS = [
+  "canPrint",
+  "canExportExcel",
+  "canUseReports",
+  "canUseShipping",
+] as const;
+
+export type OverrideFeatureKey = (typeof OVERRIDE_FEATURE_KEYS)[number];
+
+export interface OverrideEntry {
+  value: number | boolean;
+  setBy: string;
+  setByUsername: string | null;
+  setAt: string;
+}
+
+export interface UserOverrides {
+  maxDevices?: OverrideEntry | null;
+  features?: Partial<Record<OverrideFeatureKey, OverrideEntry | null>> | null;
+}
+
+export async function updateUserOverrides(
+  userId: string,
+  input: {
+    maxDevices?: number | null;
+    features?: Partial<Record<OverrideFeatureKey, boolean | null>>;
+  },
+  adminUserId: string,
+) {
+  const [user] = await db
+    .select({ id: users.id, overrides: users.overrides })
+    .from(users)
+    .where(eq(users.id, userId));
+
+  if (!user) return null;
+
+  // Resolve the acting admin's username for denormalized display.
+  const [adminRow] = await db
+    .select({ username: users.username })
+    .from(users)
+    .where(eq(users.id, adminUserId))
+    .limit(1);
+  const setByUsername = adminRow?.username ?? null;
+  const setAt = new Date().toISOString();
+
+  const current = (user.overrides ?? {}) as UserOverrides;
+  const next: UserOverrides = {
+    ...current,
+    features: { ...(current.features ?? {}) },
+  };
+
+  if ("maxDevices" in input) {
+    if (input.maxDevices == null) {
+      delete next.maxDevices;
+    } else {
+      next.maxDevices = { value: input.maxDevices, setBy: adminUserId, setByUsername, setAt };
+    }
+  }
+
+  if (input.features) {
+    for (const key of Object.keys(input.features) as OverrideFeatureKey[]) {
+      const value = input.features[key];
+      if (value == null) {
+        delete next.features?.[key];
+      } else {
+        next.features![key] = { value, setBy: adminUserId, setByUsername, setAt };
+      }
+    }
+  }
+
+  const [updated] = await db
+    .update(users)
+    .set({ overrides: next, updatedAt: new Date() })
+    .where(eq(users.id, userId))
+    .returning();
+
+  return { user: updated, before: user.overrides, after: next };
 }
