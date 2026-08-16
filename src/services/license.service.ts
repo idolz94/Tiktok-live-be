@@ -1,6 +1,7 @@
-import { eq, and, or, lte } from "drizzle-orm";
+import { eq, and, or, lte, gt, ilike, isNotNull, count, asc, sql } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 import { db, type DbOrTx } from "../lib/db.js";
-import { shops, shopLicenses, licensePlans, users, shopMembers } from "../db/schema/index.js";
+import { shops, shopLicenses, licensePlans, users, shopMembers, orders, liveSessions, tiktokChannels } from "../db/schema/index.js";
 import { env } from "../config/env.js";
 import { addDays } from "../utils/date.js";
 import { seedLicensePlans } from "../db/seed-license-plans.js";
@@ -206,4 +207,207 @@ export async function expireOldLicenses(): Promise<number> {
     )
     .returning({ id: shopLicenses.id });
   return result.length;
+}
+
+// ─── Admin: license plan lookup ──────────────────────────────────────────────
+
+export async function getLicensePlan(code: string) {
+  const [plan] = await db
+    .select()
+    .from(licensePlans)
+    .where(eq(licensePlans.code, code))
+    .limit(1);
+  return plan ?? null;
+}
+
+// ─── Admin: license detail (shop + current license + plan defaults) ──────────
+
+export async function getLicenseAdminDetail(shopId: string) {
+  const [shop] = await db
+    .select({ id: shops.id, name: shops.name, licenseStatus: shops.licenseStatus })
+    .from(shops)
+    .where(eq(shops.id, shopId))
+    .limit(1);
+  if (!shop) return null;
+
+  const license = await getCurrentLicense(shopId);
+  const planDefaults = license ? await getLicensePlan(license.planCode) : null;
+
+  return { shop, license, planDefaults };
+}
+
+// ─── Admin: cross-shop license search ────────────────────────────────────────
+
+export type LicenseSortBy = "expiredAt" | "shopName";
+
+export async function searchLicenses({
+  query,
+  plan,
+  status,
+  expiringSoon = false,
+  sortBy = "expiredAt",
+  page = 1,
+  limit = 20,
+}: {
+  query?: string;
+  plan?: string;
+  status?: string;
+  expiringSoon?: boolean;
+  sortBy?: LicenseSortBy;
+  page?: number;
+  limit?: number;
+}) {
+  const limitCapped = Math.min(limit, 100);
+  const offset = (page - 1) * limitCapped;
+  const now = new Date();
+
+  const conditions: SQL[] = [eq(shopLicenses.isCurrent, true)];
+  if (plan) conditions.push(eq(shopLicenses.planCode, plan));
+  if (status) conditions.push(eq(shopLicenses.status, status));
+  if (expiringSoon) {
+    conditions.push(isNotNull(shopLicenses.expiredAt));
+    conditions.push(gt(shopLicenses.expiredAt, now));
+    conditions.push(lte(shopLicenses.expiredAt, addDays(now, 7)));
+  }
+  const q = query?.trim();
+  if (q) {
+    conditions.push(or(ilike(shops.name, `%${q}%`), ilike(users.username, `%${q}%`))!);
+  }
+  const where = and(...conditions);
+
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(shopLicenses)
+    .innerJoin(shops, eq(shopLicenses.shopId, shops.id))
+    .leftJoin(users, eq(shops.ownerId, users.id))
+    .where(where);
+
+  if (total === 0) {
+    return { items: [], total: 0, page, limit: limitCapped };
+  }
+
+  const rows = await db
+    .select({
+      licenseId: shopLicenses.id,
+      planCode: shopLicenses.planCode,
+      status: shopLicenses.status,
+      startedAt: shopLicenses.startedAt,
+      expiredAt: shopLicenses.expiredAt,
+      trialEndsAt: shopLicenses.trialEndsAt,
+      shopId: shops.id,
+      shopName: shops.name,
+      ownerUsername: users.username,
+    })
+    .from(shopLicenses)
+    .innerJoin(shops, eq(shopLicenses.shopId, shops.id))
+    .leftJoin(users, eq(shops.ownerId, users.id))
+    .where(where)
+    .orderBy(sortBy === "shopName" ? asc(shops.name) : asc(shopLicenses.expiredAt))
+    .limit(limitCapped)
+    .offset(offset);
+
+  const items = rows.map((row) => {
+    const expiry = row.expiredAt ?? row.trialEndsAt;
+    return {
+      ...row,
+      daysRemaining: expiry
+        ? Math.ceil((new Date(expiry).getTime() - now.getTime()) / 86_400_000)
+        : null,
+    };
+  });
+
+  return { items, total, page, limit: limitCapped };
+}
+
+// ─── Admin: extend / limits ──────────────────────────────────────────────────
+
+export const LICENSE_LIMIT_FIELDS = [
+  "maxOrdersPerMonth",
+  "maxLiveSessionsPerMonth",
+  "maxMembers",
+  "maxTiktokAccounts",
+] as const;
+
+export type LicenseLimitField = (typeof LICENSE_LIMIT_FIELDS)[number];
+
+export async function extendLicense({ shopId, months }: { shopId: string; months: number }) {
+  const now = new Date();
+  const license = await getCurrentLicense(shopId);
+  if (!license) return null;
+
+  const base = license.expiredAt ?? license.trialEndsAt;
+  const from = base && new Date(base).getTime() > now.getTime() ? new Date(base) : now;
+  const newExpiredAt = addDays(from, Math.max(1, months) * 30);
+
+  const [updated] = await db
+    .update(shopLicenses)
+    .set({ expiredAt: newExpiredAt, status: "active", trialEndsAt: null, updatedAt: now })
+    .where(eq(shopLicenses.id, license.id))
+    .returning();
+
+  return { license: updated, beforeExpiredAt: license.expiredAt };
+}
+
+export async function updateLicenseLimits({
+  shopId,
+  limits,
+}: {
+  shopId: string;
+  limits: Partial<Record<LicenseLimitField, number | null>>;
+}) {
+  const license = await getCurrentLicense(shopId);
+  if (!license) return null;
+
+  const set: Record<string, unknown> = { updatedAt: new Date() };
+  for (const field of LICENSE_LIMIT_FIELDS) {
+    if (field in limits) set[field] = limits[field] ?? null;
+  }
+
+  const [updated] = await db
+    .update(shopLicenses)
+    .set(set)
+    .where(eq(shopLicenses.id, license.id))
+    .returning();
+
+  const pick = (l: typeof license) =>
+    Object.fromEntries(LICENSE_LIMIT_FIELDS.map((f) => [f, l[f]]));
+
+  return { license: updated, before: pick(license), after: pick(updated) };
+}
+
+// ─── Admin: usage this month ─────────────────────────────────────────────────
+
+export async function getLicenseUsage(shopId: string) {
+  const now = new Date();
+  const from = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  const license = await getCurrentLicense(shopId);
+
+  const [{ orderCount }] = await db
+    .select({ orderCount: count() })
+    .from(orders)
+    .where(and(eq(orders.shopId, shopId), gt(orders.createdAt, from)));
+
+  const [{ sessionCount }] = await db
+    .select({ sessionCount: count() })
+    .from(liveSessions)
+    .where(and(eq(liveSessions.shopId, shopId), gt(liveSessions.startedAt, from)));
+
+  const [{ memberCount }] = await db
+    .select({ memberCount: count() })
+    .from(shopMembers)
+    .where(and(eq(shopMembers.shopId, shopId), eq(shopMembers.status, "active")));
+
+  const [{ accountCount }] = await db
+    .select({ accountCount: sql<number>`count(distinct ${tiktokChannels.tiktokUsername})::int` })
+    .from(tiktokChannels)
+    .where(eq(tiktokChannels.shopId, shopId));
+
+  return {
+    period: { from, to: now },
+    orders: { used: orderCount, max: license?.maxOrdersPerMonth ?? null },
+    liveSessions: { used: sessionCount, max: license?.maxLiveSessionsPerMonth ?? null },
+    members: { used: memberCount, max: license?.maxMembers ?? null },
+    tiktokAccounts: { used: accountCount, max: license?.maxTiktokAccounts ?? null },
+  };
 }

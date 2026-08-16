@@ -43,6 +43,27 @@
       "when": 1783362651619,
       "tag": "0005_unknown_tusk",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786690513584,
+      "tag": "0006_tearful_genesis",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786691600000,
+      "tag": "0017_admin_audit_logs_soft_delete",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786814400000,
+      "tag": "0018_users_overrides",
+      "breakpoints": true
     }
   ]
 }

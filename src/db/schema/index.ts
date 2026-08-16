@@ -31,7 +31,27 @@ export const users = pgTable("users", {
   youtubeUrl: text("youtube_url"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  overrides: jsonb("overrides"),
 });
+
+// ─── admin_audit_logs ──────────────────────────────────────────────────────────
+export const adminAuditLogs = pgTable("admin_audit_logs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  adminUserId: uuid("admin_user_id").notNull().references(() => users.id),
+  action: text("action").notNull(),
+  targetType: text("target_type").notNull(),
+  targetId: text("target_id").notNull(),
+  before: jsonb("before"),
+  after: jsonb("after"),
+  metadata: jsonb("metadata"),
+  ip: text("ip"),
+  userAgent: text("user_agent"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("admin_audit_logs_target_idx").on(table.targetType, table.targetId),
+  index("admin_audit_logs_admin_created_at_idx").on(table.adminUserId, table.createdAt),
+]);
 
 // ─── oauth_accounts ───────────────────────────────────────────────────────────
 export const oauthAccounts = pgTable("oauth_accounts", {
@@ -71,6 +91,7 @@ export const shops = pgTable("shops", {
   trialEndsAt: timestamp("trial_ends_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
 });
 
 // ─── shop_members ─────────────────────────────────────────────────────────────
@@ -261,6 +282,7 @@ export const orders = pgTable("orders", {
   providerCode: text("provider_code"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
 }, (table) => [
   uniqueIndex("orders_order_code_unique").on(table.orderCode),
   index("orders_shop_id_created_at_idx").on(table.shopId, table.createdAt),

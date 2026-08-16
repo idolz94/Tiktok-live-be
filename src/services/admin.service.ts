@@ -1,24 +1,96 @@
-import { and, desc, eq, ilike, inArray, ne, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, isNotNull, isNull, or, sql, type SQL } from "drizzle-orm";
 import { db } from "../lib/db.js";
 import { refreshTokens, shopLicenses, shops, users } from "../db/schema/index.js";
 
 // ─── Search users ─────────────────────────────────────────────────────────────
 
-export async function searchUsers({
-  username,
-  page = 1,
-  limit = 20,
-}: {
-  username: string;
+type AdminUserStatusFilter = "active" | "locked" | "archived";
+
+type SearchUsersInput = {
+  query?: string;
+  username?: string;
+  status?: AdminUserStatusFilter;
+  role?: string;
+  licensePlan?: string;
+  licenseStatus?: string;
   page?: number;
   limit?: number;
-}) {
+};
+
+function buildSearchUsersWhere({
+  query,
+  username,
+  status,
+  role,
+  licensePlan,
+  licenseStatus,
+}: SearchUsersInput) {
+  const conditions: SQL[] = [];
+  const normalizedQuery = query?.trim() ?? "";
+  const searchTerm = normalizedQuery.length > 0 ? normalizedQuery : (username ?? "").trim();
+
+  if (searchTerm.length > 0) {
+    const pattern = `%${searchTerm}%`;
+    conditions.push(
+      or(
+        ilike(users.username, pattern),
+        ilike(users.phone, pattern),
+        ilike(users.email, pattern),
+        ilike(users.fullName, pattern),
+      )!,
+    );
+  }
+
+  if (status === "archived") {
+    conditions.push(isNotNull(users.deletedAt));
+  } else {
+    conditions.push(isNull(users.deletedAt));
+    if (status) {
+      conditions.push(eq(users.status, status));
+    }
+  }
+
+  if (role) {
+    conditions.push(eq(users.role, role));
+  }
+
+  if (licensePlan || licenseStatus) {
+    conditions.push(sql`exists (
+      select 1
+      from ${shops}
+      inner join ${shopLicenses} on ${shopLicenses.shopId} = ${shops.id}
+      where ${shops.ownerId} = ${users.id}
+        and ${shopLicenses.isCurrent} = true
+        ${licensePlan ? sql`and ${shopLicenses.planCode} = ${licensePlan}` : sql``}
+        ${licenseStatus ? sql`and ${shopLicenses.status} = ${licenseStatus}` : sql``}
+    )`);
+  }
+
+  return and(...conditions);
+}
+
+export async function searchUsers({
+  query,
+  username,
+  status,
+  role,
+  licensePlan,
+  licenseStatus,
+  page = 1,
+  limit = 20,
+}: SearchUsersInput) {
   const limitCapped = Math.min(limit, 100);
   const offset = (page - 1) * limitCapped;
-  const pattern = `%${username.trim()}%`;
-  const where = and(ilike(users.username, pattern), ne(users.role, "admin"));
+  const where = buildSearchUsersWhere({
+    query,
+    username,
+    status,
+    role,
+    licensePlan,
+    licenseStatus,
+  });
 
-  // Count matching users
+  // Count matching users using the same filters as the paginated list.
   const [{ total }] = await db
     .select({ total: sql<number>`count(*)::int` })
     .from(users)
@@ -36,7 +108,9 @@ export async function searchUsers({
       email: users.email,
       phone: users.phone,
       fullName: users.fullName,
+      role: users.role,
       status: users.status,
+      deletedAt: users.deletedAt,
       createdAt: users.createdAt,
     })
     .from(users)
@@ -47,17 +121,40 @@ export async function searchUsers({
 
   const userIds = userRows.map((u) => u.id);
 
-  // Bulk-fetch owned shops
-  const shopRows = await db
-    .select({
-      id: shops.id,
-      ownerId: shops.ownerId,
-      name: shops.name,
-      licenseStatus: shops.licenseStatus,
-      trialEndsAt: shops.trialEndsAt,
-    })
-    .from(shops)
-    .where(inArray(shops.ownerId, userIds));
+  const licenseConditions: SQL[] = [];
+  if (licensePlan) {
+    licenseConditions.push(sql`exists (
+      select 1
+      from ${shopLicenses}
+      where ${shopLicenses.shopId} = ${shops.id}
+        and ${shopLicenses.isCurrent} = true
+        and ${shopLicenses.planCode} = ${licensePlan}
+    )`);
+  }
+  if (licenseStatus) {
+    licenseConditions.push(sql`exists (
+      select 1
+      from ${shopLicenses}
+      where ${shopLicenses.shopId} = ${shops.id}
+        and ${shopLicenses.isCurrent} = true
+        and ${shopLicenses.status} = ${licenseStatus}
+    )`);
+  }
+
+  // Bulk-fetch owned shops. When license filters are applied, hydrate a shop
+  // whose current license satisfies the same filter so displayed rows match it.
+  const shopRows = userIds.length > 0
+    ? await db
+        .select({
+          id: shops.id,
+          ownerId: shops.ownerId,
+          name: shops.name,
+          licenseStatus: shops.licenseStatus,
+          trialEndsAt: shops.trialEndsAt,
+        })
+        .from(shops)
+        .where(and(inArray(shops.ownerId, userIds), ...licenseConditions))
+    : [];
 
   // One shop per owner (take first if somehow multiple)
   const shopByOwner = new Map<string, (typeof shopRows)[number]>();
@@ -98,7 +195,10 @@ export async function searchUsers({
       email: u.email,
       phone: u.phone,
       fullName: u.fullName,
+      role: u.role,
       status: u.status,
+      deletedAt: u.deletedAt,
+      isArchived: u.deletedAt !== null,
       createdAt: u.createdAt,
       shop: shop
         ? {
@@ -124,6 +224,16 @@ export async function searchUsers({
 // ─── User detail ──────────────────────────────────────────────────────────────
 
 export async function updateUserStatus(userId: string, status: "active" | "locked") {
+  // Fetch current user status for before/after snapshot
+  const [currentUser] = await db
+    .select({ status: users.status })
+    .from(users)
+    .where(eq(users.id, userId));
+
+  if (!currentUser) return null;
+
+  const beforeStatus = currentUser.status;
+
   const [user] = await db
     .update(users)
     .set({ status, updatedAt: new Date() })
@@ -142,7 +252,7 @@ export async function updateUserStatus(userId: string, status: "active" | "locke
     await db.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
   }
 
-  return user ?? null;
+  return { user, beforeStatus };
 }
 
 export async function getUserDetail(userId: string) {
@@ -153,8 +263,11 @@ export async function getUserDetail(userId: string) {
       email: users.email,
       phone: users.phone,
       fullName: users.fullName,
+      role: users.role,
       status: users.status,
+      deletedAt: users.deletedAt,
       createdAt: users.createdAt,
+      overrides: users.overrides,
     })
     .from(users)
     .where(eq(users.id, userId));
@@ -197,8 +310,164 @@ export async function getUserDetail(userId: string) {
   }
 
   return {
-    user,
+    user: {
+      ...user,
+      isArchived: user.deletedAt !== null,
+    },
     shop: shop ?? null,
     license,
   };
+}
+
+// ─── User role change ────────────────────────────────────────────────────────
+
+export async function updateUserRole(userId: string, role: "user" | "manager" | "admin") {
+  // Fetch current role for before/after snapshot
+  const [currentUser] = await db
+    .select({ role: users.role })
+    .from(users)
+    .where(eq(users.id, userId));
+
+  if (!currentUser) return null;
+
+  const beforeRole = currentUser.role;
+
+  const [user] = await db
+    .update(users)
+    .set({ role, updatedAt: new Date() })
+    .where(eq(users.id, userId))
+    .returning({
+      id: users.id,
+      username: users.username,
+      email: users.email,
+      phone: users.phone,
+      fullName: users.fullName,
+      role: users.role,
+      status: users.status,
+      createdAt: users.createdAt,
+    });
+
+  return { user, beforeRole };
+}
+
+// ─── User archive (soft delete) ──────────────────────────────────────────────
+
+export async function archiveUser(userId: string) {
+  // Fetch current user for before/after snapshot
+  const [currentUser] = await db
+    .select({
+      id: users.id,
+      deletedAt: users.deletedAt,
+    })
+    .from(users)
+    .where(eq(users.id, userId));
+
+  if (!currentUser) return null;
+
+  const beforeArchived = currentUser.deletedAt !== null;
+
+  const now = new Date();
+  const [user] = await db
+    .update(users)
+    .set({ deletedAt: now, updatedAt: now })
+    .where(eq(users.id, userId))
+    .returning({
+      id: users.id,
+      username: users.username,
+      email: users.email,
+      phone: users.phone,
+      fullName: users.fullName,
+      role: users.role,
+      status: users.status,
+      deletedAt: users.deletedAt,
+      createdAt: users.createdAt,
+    });
+
+  // Revoke all refresh tokens for the archived user
+  if (user) {
+    await db.delete(refreshTokens).where(eq(refreshTokens.userId, userId));
+  }
+
+  return { user, beforeArchived };
+}
+
+// ─── Per-user overrides ──────────────────────────────────────────────────────
+
+export const OVERRIDE_FEATURE_KEYS = [
+  "canPrint",
+  "canExportExcel",
+  "canUseReports",
+  "canUseShipping",
+] as const;
+
+export type OverrideFeatureKey = (typeof OVERRIDE_FEATURE_KEYS)[number];
+
+export interface OverrideEntry {
+  value: number | boolean;
+  setBy: string;
+  setByUsername: string | null;
+  setAt: string;
+}
+
+export interface UserOverrides {
+  maxDevices?: OverrideEntry | null;
+  features?: Partial<Record<OverrideFeatureKey, OverrideEntry | null>> | null;
+}
+
+export async function updateUserOverrides(
+  userId: string,
+  input: {
+    maxDevices?: number | null;
+    features?: Partial<Record<OverrideFeatureKey, boolean | null>>;
+  },
+  adminUserId: string,
+) {
+  const [user] = await db
+    .select({ id: users.id, overrides: users.overrides })
+    .from(users)
+    .where(eq(users.id, userId));
+
+  if (!user) return null;
+
+  // Resolve the acting admin's username for denormalized display.
+  const [adminRow] = await db
+    .select({ username: users.username })
+    .from(users)
+    .where(eq(users.id, adminUserId))
+    .limit(1);
+  const setByUsername = adminRow?.username ?? null;
+  const setAt = new Date().toISOString();
+
+  const current = (user.overrides ?? {}) as UserOverrides;
+  const next: UserOverrides = {
+    ...current,
+    features: { ...(current.features ?? {}) },
+  };
+
+  if ("maxDevices" in input) {
+    if (input.maxDevices == null) {
+      delete next.maxDevices;
+    } else {
+      next.maxDevices = { value: input.maxDevices, setBy: adminUserId, setByUsername, setAt };
+    }
+  }
+
+  if (input.features) {
+    for (const key of Object.keys(input.features) as OverrideFeatureKey[]) {
+      const value = input.features[key];
+      if (value == null) {
+        delete next.features?.[key];
+      } else {
+        next.features![key] = { value, setBy: adminUserId, setByUsername, setAt };
+      }
+    }
+  }
+
+  const [updated] = await db
+    .update(users)
+    .set({ overrides: next, updatedAt: new Date() })
+    .where(eq(users.id, userId))
+    .returning();
+
+  return { user: updated, before: user.overrides, after: next };
 }

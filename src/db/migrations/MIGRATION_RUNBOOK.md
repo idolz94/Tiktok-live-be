@@ -15,6 +15,7 @@ Fresh installs: run `0006_full_schema_rebuild.sql` then `0008`, `0009`, `0010`.
 0009_shipping_redesign_backfill.sql   -- UPDATE existing rows, INSERT seed events
 0010_shipping_money_integer.sql       -- ALTER COLUMN TYPE for money fields
 0016_live_comment_analytics.sql       -- ADD COLUMN, dedupe live_comments, add analytics indexes
+0017_admin_audit_logs_soft_delete.sql -- CREATE admin_audit_logs, ADD deleted_at on users/shops/orders
 ```
 
 ## 0016 — live comment analytics foundation
@@ -64,6 +65,53 @@ WHERE tablename = 'live_comments'
     'live_comments_matched_product_code_created_at_idx'
   )
 ORDER BY indexname;
+```
+
+## 0017 — admin audit logs + soft delete columns
+
+Creates the `admin_audit_logs` table with structured before/after JSON snapshots,
+request metadata, a foreign key to `users.id`, and composite indexes on
+`(target_type, target_id)` and `(admin_user_id, created_at)`.
+
+Adds nullable `deleted_at` timestamptz columns to `users`, `shops`, and `orders`
+for future soft-delete archival workflows.
+
+This migration is idempotent (`IF NOT EXISTS`, `DO $$ ... END $$`) and safe to
+re-run on a live DB.
+
+## 0017 verification queries
+
+Run after applying `0017_admin_audit_logs_soft_delete.sql` to verify:
+
+```sql
+-- admin_audit_logs table exists with correct columns
+SELECT column_name, data_type, column_default
+FROM information_schema.columns
+WHERE table_name = 'admin_audit_logs'
+ORDER BY ordinal_position;
+
+-- foreign key exists
+SELECT constraint_name
+FROM information_schema.table_constraints
+WHERE table_name = 'admin_audit_logs'
+  AND constraint_type = 'FOREIGN KEY';
+
+-- composite indexes exist
+SELECT indexname, indexdef
+FROM pg_indexes
+WHERE tablename = 'admin_audit_logs'
+  AND indexname IN (
+    'admin_audit_logs_target_idx',
+    'admin_audit_logs_admin_created_at_idx'
+  )
+ORDER BY indexname;
+
+-- soft-delete columns exist
+SELECT table_name, column_name
+FROM information_schema.columns
+WHERE column_name = 'deleted_at'
+  AND table_name IN ('users', 'shops', 'orders')
+ORDER BY table_name;
 ```
 
 ## What each migration does
