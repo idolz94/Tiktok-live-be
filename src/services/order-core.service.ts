@@ -5,7 +5,7 @@ import { badRequest, notFound } from "../lib/api-error.js";
 import { getCommentAvatar, getCommentDisplayName, getCommentText } from "../utils/comment.js";
 import { createOrderCode } from "../utils/id.js";
 import { getCommentTikTokUsername } from "../utils/tiktok.js";
-import { findOrCreateCustomer, updateCustomerAfterOrder, decrementCustomerAfterOrderDelete } from "./customer.service.js";
+import { findOrCreateCustomer, listCustomerOrders, updateCustomerAfterOrder, decrementCustomerAfterOrderDelete } from "./customer.service.js";
 import { findDbLiveCommentId, updateLiveCommentOrder } from "./live-comments.service.js";
 import { updateLiveSessionOrderCount } from "./live-sessions.service.js";
 import { matchPresetByComment } from "./product-presets.service.js";
@@ -877,11 +877,19 @@ export async function mergeDraftOrders({
       })
       .where(and(eq(customers.id, targetOrder.customerId), eq(customers.shopId, shopId)));
 
-    return { mergedOrderIds: selectedOrderIds, deletedOrderIds: uniqueSourceOrderIds, mergedItemCount: movedItems.length };
+    return {
+      customerId: targetOrder.customerId,
+      mergedOrderIds: selectedOrderIds,
+      deletedOrderIds: uniqueSourceOrderIds,
+      mergedItemCount: movedItems.length,
+    };
   });
 
-  const order = await getOrderById(targetOrderId, shopId);
-  return { ...result, targetOrderId, order };
+  const [order, refreshedOrders] = await Promise.all([
+    getOrderById(targetOrderId, shopId),
+    listCustomerOrders(shopId, result.customerId),
+  ]);
+  return { ...result, targetOrderId, order, orders: refreshedOrders };
 }
 
 export async function deleteOrder({ shopId, orderId }: { shopId: string; orderId: string }) {
