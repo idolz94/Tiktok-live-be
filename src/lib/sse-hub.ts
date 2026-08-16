@@ -11,6 +11,7 @@ export type SseEventName =
   | "LIVE_TIME_ENDED"
   | "COMMENT"
   | "COMMENT_SAVED"
+  | "BUYING_INTENT_UPDATED"
   | "MESSAGE"
   | "USER_JOINED"
   | "COLLECTOR_STOPPED"

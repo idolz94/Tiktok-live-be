@@ -423,6 +423,30 @@ export const liveComments = pgTable("live_comments", {
   uniqueIndex("live_comments_session_external_comment_id_unique").on(table.liveSessionId, table.externalCommentId),
 ]);
 
+// ─── buying_intent_queue ──────────────────────────────────────────────────────
+export const buyingIntentQueue = pgTable("buying_intent_queue", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
+  liveSessionId: uuid("live_session_id").notNull().references(() => liveSessions.id, { onDelete: "cascade" }),
+  tiktokUsername: text("tiktok_username").notNull(),
+  displayName: text("display_name"),
+  avatarUrl: text("avatar_url"),
+  intent: text("intent").notNull().default("buy"),
+  priorityLevel: text("priority_level").notNull().default("high"),
+  finalScore: real("final_score").default(0),
+  commentCount: integer("comment_count").default(1),
+  latestCommentId: uuid("latest_comment_id").references(() => liveComments.id, { onDelete: "set null" }),
+  latestCommentText: text("latest_comment_text"),
+  latestCommentAt: timestamp("latest_comment_at", { withTimezone: true }),
+  status: text("status").notNull().default("pending"),
+  handledAt: timestamp("handled_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("buying_intent_queue_session_username_unique").on(table.liveSessionId, table.tiktokUsername),
+  index("buying_intent_queue_shop_session_status_idx").on(table.shopId, table.liveSessionId, table.status),
+]);
+
 // ─── payments ─────────────────────────────────────────────────────────────────
 export const payments = pgTable("payments", {
   id: uuid("id").primaryKey().defaultRandom(),

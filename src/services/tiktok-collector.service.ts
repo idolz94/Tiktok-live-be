@@ -15,6 +15,7 @@ import {
   resolveShopForCollectorEvent,
 } from "./internal-live-ingest.service.js";
 import { endLiveSession } from "./live-sessions.service.js";
+import { upsertBuyingIntentQueueFromComment } from "./buying-intent-queue.service.js";
 import { saveLiveComment } from "./live-comments.service.js";
 import { updateTikTokChannelProfile } from "./tiktok-channels.service.js";
 
@@ -95,9 +96,6 @@ async function ingestComment(room: RoomState, data: any) {
     avatarUrl,
     commentText,
     text: commentText,
-    intent: "normal",
-    priorityLevel: "normal",
-    finalScore: 0,
     isOrderCreated: false,
     createdAt,
     rawPayload: data,
@@ -138,6 +136,14 @@ async function ingestComment(room: RoomState, data: any) {
   };
 
   sendRoomSse(room, shop.id, "COMMENT", realtimePayload);
+
+  try {
+    const item = await upsertBuyingIntentQueueFromComment(comment);
+    if (item) sendRoomSse(room, shop.id, "BUYING_INTENT_UPDATED", { item });
+  } catch (e: any) {
+    // ponytail: queue is secondary; never drop the live comment because queue upsert failed.
+    logger.warn({ err: e?.message, commentId: comment.id }, "[TIKTOK] buying intent queue failed");
+  }
 
   await enqueueLiveEvent("comment-saved", {
     shopId: shop.id,
