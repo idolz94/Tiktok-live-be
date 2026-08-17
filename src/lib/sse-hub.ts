@@ -12,6 +12,7 @@ export type SseEventName =
   | "COMMENT"
   | "COMMENT_SAVED"
   | "BUYING_INTENT_UPDATED"
+  | "ORDER_RECOMMENDED"
   | "MESSAGE"
   | "USER_JOINED"
   | "COLLECTOR_STOPPED"

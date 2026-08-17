@@ -64,6 +64,20 @@
       "when": 1786814400000,
       "tag": "0018_users_overrides",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786926673168,
+      "tag": "0009_wealthy_jackpot",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786932637230,
+      "tag": "0010_fearless_lightspeed",
+      "breakpoints": true
     }
   ]
 }

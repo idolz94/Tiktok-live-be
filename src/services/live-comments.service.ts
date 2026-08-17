@@ -30,7 +30,7 @@ export async function saveLiveComment({
   const intentResult = analyzeLiveCommentIntent(commentText);
 
   const matchedPreset = await matchPresetByComment(shopId, commentText);
-  if (matchedPreset && intentResult.canSuggestOrder) {
+  if (matchedPreset && intentResult.intent !== "spam" && intentResult.intent !== "user") {
     intentResult.intent = "buy";
     intentResult.priorityLevel = "high";
     intentResult.finalScore = Math.max(intentResult.finalScore, 90);
@@ -75,6 +75,9 @@ export async function saveLiveComment({
     matchedReasons: intentResult.matchedReasons,
     ruleVersion: "comment-rules-v1",
     matchedProductCode: matchedPreset?.code ?? null,
+    topic: intentResult.topic ?? null,
+    confidence: intentResult.confidence ?? null,
+    productReference: intentResult.productReference ?? null,
     isOrderCreated: Boolean(comment?.isOrderCreated || comment?.is_order_created),
     orderId: comment?.orderId || comment?.order_id || null,
     updatedAt: new Date(),
