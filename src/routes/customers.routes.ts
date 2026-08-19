@@ -4,7 +4,7 @@ import { asyncHandler } from "../lib/async-handler.js";
 import { mutateOk, ok } from "../lib/response.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { requireShopId } from "../services/account.service.js";
-import { getCustomerById, listCustomerOrders, listCustomers, updateCustomerProfile } from "../services/customer.service.js";
+import { getCustomerAnalytics, getCustomerById, getCustomerOverview, listCustomerOrders, listCustomers, updateCustomerProfile } from "../services/customer.service.js";
 
 const router = Router();
 
@@ -25,6 +25,24 @@ router.get(
     const offset = request.query.offset ? Number(request.query.offset) : 0;
     const customers = await listCustomers(shopId, limit, offset);
     return ok(response, { customers });
+  }),
+);
+
+router.get(
+  "/overview",
+  asyncHandler(async (request, response) => {
+    const shopId = await requireShopId(request);
+    const overview = await getCustomerOverview(shopId);
+    return ok(response, overview);
+  }),
+);
+
+router.get(
+  "/:customerId/analytics",
+  asyncHandler(async (request, response) => {
+    const shopId = await requireShopId(request);
+    const analytics = await getCustomerAnalytics(shopId, String(request.params.customerId));
+    return ok(response, { analytics });
   }),
 );
 
