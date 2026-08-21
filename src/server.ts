@@ -1,6 +1,7 @@
 import { createApp } from "./app.js";
 import { assertRequiredEnv, env } from "./config/env.js";
 import logger from "./lib/logger.js";
+import { pool } from "./lib/db.js";
 import { expireOldLicenses } from "./services/license.service.js";
 
 assertRequiredEnv();
