@@ -16,7 +16,7 @@ export const env = {
   port: readNumberEnv("PORT", 3001),
   clientOrigin: readEnv("CLIENT_ORIGIN", "http://localhost:3000"),
 
-  // Neon Postgres
+  // Postgres (self-hosted VM)
   databaseUrl: readEnv("DATABASE_URL"),
 
   // JWT custom auth
