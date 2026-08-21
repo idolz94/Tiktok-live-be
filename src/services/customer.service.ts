@@ -267,21 +267,28 @@ export async function getCustomerAnalytics(shopId: string, customerId: string) {
   if (!customer) throw notFound("Customer not found");
   if (customer.shopId !== shopId) throw forbidden("Customer does not belong to your shop");
 
-  // ponytail: một query đếm + tổng, dùng index orders(shopId,customerId)+where deletedAt IS NULL
+  const baseOrderWhere = and(eq(orders.shopId, shopId), eq(orders.customerId, customerId), isNull(orders.deletedAt));
+
   const [agg] = await db
     .select({
       totalOrders: sql<number>`count(*)::int`,
       totalSpent: sql<number>`coalesce(sum(${orders.totalAmount}),0)::int`,
       avgOrderValue: sql<number>`coalesce(avg(${orders.totalAmount}),0)::int`,
-      lastOrderAmount: sql<number | null>`(select ${orders.totalAmount} from ${orders} where ${orders.shopId}=${shopId} and ${orders.customerId}=${customerId} and ${orders.deletedAt} is null order by ${orders.createdAt} desc limit 1)`,
     })
     .from(orders)
-    .where(and(eq(orders.shopId, shopId), eq(orders.customerId, customerId), isNull(orders.deletedAt)));
+    .where(baseOrderWhere);
+
+  const [lastOrderRow] = await db
+    .select({ totalAmount: orders.totalAmount })
+    .from(orders)
+    .where(baseOrderWhere)
+    .orderBy(desc(orders.createdAt))
+    .limit(1);
 
   const statusRows = await db
     .select({ status: orders.status, count: sql<number>`count(*)::int` })
     .from(orders)
-    .where(and(eq(orders.shopId, shopId), eq(orders.customerId, customerId), isNull(orders.deletedAt)))
+    .where(baseOrderWhere)
     .groupBy(orders.status);
 
   const topProducts = await db
@@ -303,7 +310,7 @@ export async function getCustomerAnalytics(shopId: string, customerId: string) {
     totalOrders: agg?.totalOrders ?? 0,
     totalSpent: agg?.totalSpent ?? 0,
     avgOrderValue: agg?.avgOrderValue ?? 0,
-    lastOrderAmount: agg?.lastOrderAmount ?? null,
+    lastOrderAmount: lastOrderRow?.totalAmount ?? null,
     lastOrderAt: customer.lastOrderAt,
     byStatus,
     topProducts: topProducts.map((p) => ({ productCode: p.productCode, productName: p.productName, quantity: p.qty })),
