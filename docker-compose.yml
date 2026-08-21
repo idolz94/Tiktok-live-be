@@ -1,6 +1,5 @@
 services:
-  app:
-    build: .
+  tiktok-live-be:
     image: registry.quangit.site/dev/tiktok-live-be:1.0.0
     ports:
       - "3001:3001"

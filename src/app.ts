@@ -67,14 +67,14 @@ export function createApp() {
   app.use(cookieParser());
   app.use(morgan(env.nodeEnv === "production" ? "combined" : "dev"));
 
+  app.get("/health", (_request, response) => {
+    response.json({ ok: true, service: "lumi-backend", time: new Date().toISOString() });
+  });
+
   // Registered before requireKnownClient — providers send server-side POST without Origin header
   app.use("/api/webhooks/spx", webhookSpxRoutes);
 
   app.use(requireKnownClient);
-
-  app.get("/health", (_request, response) => {
-    response.json({ ok: true, service: "lumi-backend", time: new Date().toISOString() });
-  });
 
   app.use("/api/auth", authRoutes);
   app.use("/api/me", meRoutes);
