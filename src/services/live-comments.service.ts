@@ -3,9 +3,10 @@ import { db } from "../lib/db.js";
 import { liveComments } from "../db/schema/index.js";
 import { getCommentAvatar, getCommentDisplayName, getCommentText, hasNumber } from "../utils/comment.js";
 import { getCommentTikTokUsername, normalizeAtUsername } from "../utils/tiktok.js";
-import { analyzeLiveCommentIntent } from "../utils/comment-intent.js";
 import { matchPresetByComment } from "./product-presets.service.js";
 import { updateLiveSessionCommentCount } from "./live-sessions.service.js";
+import { runCommentPipeline } from "../utils/comment-pipeline.js";
+import logger from "../lib/logger.js";
 
 export async function saveLiveComment({
   shopId,
@@ -27,29 +28,26 @@ export async function saveLiveComment({
   if (!externalCommentId) return null;
 
   const tiktokUsername = normalizeAtUsername(getCommentTikTokUsername(comment));
-  const intentResult = analyzeLiveCommentIntent(commentText);
-
   const matchedPreset = await matchPresetByComment(shopId, commentText);
-  if (matchedPreset && intentResult.canSuggestOrder) {
-    intentResult.intent = "buy";
-    intentResult.priorityLevel = "high";
-    intentResult.finalScore = Math.max(intentResult.finalScore, 90);
-    intentResult.canCreateDraftOrder = true;
-    intentResult.canCreateOrder = true;
-    intentResult.isPotentialBuyer = true;
-  }
-
   const normalizedLiveUser = liveUsername ? normalizeAtUsername(liveUsername) : "";
-  if (normalizedLiveUser && tiktokUsername === normalizedLiveUser) {
-    intentResult.intent = "user";
-    intentResult.priorityLevel = "normal";
-    intentResult.finalScore = 0;
-    intentResult.canSuggestOrder = false;
-    intentResult.canCreateDraftOrder = false;
-    intentResult.canCreateOrder = false;
-    intentResult.isPotentialBuyer = false;
-    intentResult.matchedReasons = [];
+  const isHost = Boolean(normalizedLiveUser && tiktokUsername === normalizedLiveUser);
+
+  const pipeline = runCommentPipeline(commentText, {
+    isHost,
+    matchedPresetCode: matchedPreset?.code ?? null,
+  });
+
+  // ponytail: dot1 gate — NEED_LLM only logged, no LLM call yet
+  if (pipeline.verdict === "NEED_LLM") {
+    logger.debug(
+      { text: commentText.slice(0, 80), intent: pipeline.intent, missingFields: pipeline.missingFields },
+      "[PIPELINE] NEED_LLM — queued for LLM phase 2",
+    );
   }
+  // ponytail: metric hook — count per verdict: pipeline_verdict_total{verdict}
+  logger.debug({ verdict: pipeline.verdict, intent: pipeline.intent }, "[PIPELINE] verdict");
+
+  const intentResult = pipeline.result;
 
   const payload = {
     shopId,
@@ -75,6 +73,9 @@ export async function saveLiveComment({
     matchedReasons: intentResult.matchedReasons,
     ruleVersion: "comment-rules-v1",
     matchedProductCode: matchedPreset?.code ?? null,
+    topic: intentResult.topic ?? null,
+    confidence: intentResult.confidence ?? null,
+    productReference: intentResult.productReference ?? null,
     isOrderCreated: Boolean(comment?.isOrderCreated || comment?.is_order_created),
     orderId: comment?.orderId || comment?.order_id || null,
     updatedAt: new Date(),

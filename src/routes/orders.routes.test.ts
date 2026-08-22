@@ -210,10 +210,12 @@ describe("POST /api/orders/merge-drafts validation", () => {
   it("merges selected draft orders for the current shop", async () => {
     vi.mocked(mergeDraftOrders).mockResolvedValueOnce({
       targetOrderId: "11111111-1111-4111-8111-111111111111",
+      customerId: "customer-1",
       mergedOrderIds: ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"],
       deletedOrderIds: ["22222222-2222-4222-8222-222222222222"],
       mergedItemCount: 2,
       order: {} as Awaited<ReturnType<typeof mergeDraftOrders>>["order"],
+      orders: [] as Awaited<ReturnType<typeof mergeDraftOrders>>["orders"],
     });
 
     const { baseUrl, close } = await createTestServer();
@@ -232,6 +234,7 @@ describe("POST /api/orders/merge-drafts validation", () => {
     expect(response.status).toBe(200);
     expect(body.status).toBe("success");
     expect(body.data.merge.deletedOrderIds).toEqual(["22222222-2222-4222-8222-222222222222"]);
+    expect(Array.isArray(body.data.merge.orders)).toBe(true);
     expect(mergeDraftOrders).toHaveBeenCalledWith({
       shopId: "shop-1",
       targetOrderId: "11111111-1111-4111-8111-111111111111",

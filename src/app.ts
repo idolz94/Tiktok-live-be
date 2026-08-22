@@ -12,6 +12,7 @@ import customersRoutes from "./routes/customers.routes.js";
 import customerAddressesRoutes from "./routes/customer-addresses.routes.js";
 import shopAddressesRoutes from "./routes/shop-addresses.routes.js";
 import licenseRoutes from "./routes/license.routes.js";
+import buyingIntentQueueRoutes from "./routes/buying-intent-queue.routes.js";
 import liveCommentsRoutes from "./routes/live-comments.routes.js";
 import liveSessionsRoutes from "./routes/live-sessions.routes.js";
 import liveStreamRoutes from "./routes/live-stream.routes.js";
@@ -21,6 +22,7 @@ import paymentRoutes from "./routes/payment.routes.js";
 import shopSettingsRoutes from "./routes/shop-settings.routes.js";
 import productPresetsRoutes from "./routes/product-presets.routes.js";
 import webhookSpxRoutes from "./routes/webhook-spx.routes.js";
+import internalLiveRoutes from "./routes/internal-live.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
 import shipmentsRoutes from "./routes/shipments.routes.js";
 
@@ -86,12 +88,14 @@ export function createApp() {
   app.use("/api/live-comments", liveCommentsRoutes);
   app.use("/api/live-sessions", liveSessionsRoutes);
   app.use("/api/live-stream", liveStreamRoutes);
+  app.use("/api/live-intent-queue", buyingIntentQueueRoutes);
 
   app.use("/api/licenses", licenseRoutes);
   app.use("/api/payments", paymentRoutes);
   app.use("/api/me/shop-settings", shopSettingsRoutes);
   app.use("/api/me/product-presets", productPresetsRoutes);
   app.use("/api/admin", adminRoutes);
+  app.use("/api/internal", internalLiveRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

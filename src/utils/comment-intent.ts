@@ -1,18 +1,30 @@
 export type CommentIntent =
   | "buy"
+  | "already_ordered"
   | "ask_price"
   | "ask_stock"
   | "ask_shipping"
   | "ask_product"
+  | "ask_product_demo"
   | "ask_how_to_buy"
   | "normal"
   | "spam"
   | "user";
 
+export type CommentTopic = "size" | "color" | "material" | "weight" | "capacity" | "fee" | "delivery_time" | "size_variant" | "unknown";
 export type PriorityLevel = "high" | "medium" | "low" | "normal";
+
+export type ParsedCommentData = {
+  productCode: string | null;
+  color: string | null;
+  size: string | null;
+  quantity: number | null;
+};
 
 export type CommentRuleResult = {
   intent: CommentIntent;
+  topic?: CommentTopic;
+  confidence: number;
   priorityLevel: PriorityLevel;
   finalScore: number;
   canSuggestOrder: boolean;
@@ -20,258 +32,53 @@ export type CommentRuleResult = {
   isPotentialBuyer: boolean;
   isQuestion: boolean;
   matchedReasons: string[];
+  productReference?: string;
+  parsedData?: ParsedCommentData;
+  missingFields?: string[];
+  suggestedReply?: string;
 };
 
 export type CommentIntentResult = CommentRuleResult & {
-  /** Legacy DB field. Keep mapped from canCreateDraftOrder until schema catches up. */
   canCreateOrder: boolean;
 };
 
-function removeVietnameseAccents(input: string) {
-  return String(input || "")
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/đ/g, "d")
-    .replace(/Đ/g, "D");
-}
+import { normalizeComment, stripMetadataNoise } from "./comment-normalize.js";
+import {
+  alreadyOrderedKeywords,
+  buyKeywords,
+  howToBuyKeywords,
+  priceKeywords,
+  potentialBuyerIntents,
+  productDemoKeywords,
+  productKeywords,
+  shippingKeywords,
+  spamKeywords,
+  stockKeywords,
+  weakProductKeywords,
+} from "./comment-keywords.js";
+import {
+  computeMissingFields,
+  detectTopic,
+  extractProductReference,
+  includesAny,
+  matchKeywords,
+  parseCommentData,
+  scoreConfidence,
+} from "./comment-extract.js";
 
-function normalizeComment(input: string) {
-  return removeVietnameseAccents(input)
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function escapeRegExp(input: string) {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function hasKeyword(text: string, keyword: string) {
-  const normalizedKeyword = normalizeComment(keyword);
-  if (normalizedKeyword.length <= 2) {
-    return new RegExp(`(^|\\s)${escapeRegExp(normalizedKeyword)}($|\\s)`).test(text);
-  }
-
-  return text.includes(normalizedKeyword);
-}
-
-function includesAny(text: string, keywords: string[]) {
-  return keywords.some((keyword) => hasKeyword(text, keyword));
-}
-
-function matchKeywords(text: string, keywords: string[]) {
-  return keywords.filter((keyword) => hasKeyword(text, keyword));
-}
-
-const buyKeywords = [
-  "chốt",
-  "chot",
-  "mua",
-  "lấy",
-  "lay",
-  "order",
-  "đặt",
-  "dat",
-  "xí",
-  "xi",
-  "xin giá",
-  "xin gia",
-  "lên đơn",
-  "len don",
-  "chốt đơn",
-  "chot don",
-  "lấy 1",
-  "lay 1",
-  "lấy 2",
-  "lay 2",
-  "mua 1",
-  "mua 2",
-];
-
-const priceKeywords = [
-  "bao nhiêu",
-  "bao nhieu",
-  "bn",
-  "giá",
-  "gia",
-  "nhiêu tiền",
-  "nhieu tien",
-  "mấy tiền",
-  "may tien",
-  "bao tiền",
-  "bao tien",
-  "giá sao",
-  "gia sao",
-  "giá nhiêu",
-  "gia nhieu",
-  "giá bao nhiêu",
-  "gia bao nhieu",
-  "có mã giảm",
-  "co ma giam",
-  "voucher",
-  "giảm không",
-  "giam khong",
-];
-
-const stockKeywords = [
-  "còn không",
-  "con khong",
-  "còn ko",
-  "con ko",
-  "còn hàng",
-  "con hang",
-  "còn size",
-  "con size",
-  "còn màu",
-  "con mau",
-  "còn mã",
-  "con ma",
-  "hết chưa",
-  "het chua",
-];
-
-const shippingKeywords = [
-  "ship",
-  "giao",
-  "cod",
-  "phí ship",
-  "phi ship",
-  "vận chuyển",
-  "van chuyen",
-  "miễn ship",
-  "mien ship",
-  "giao hàng",
-  "giao hang",
-  "mấy ngày nhận",
-  "may ngay nhan",
-  "bao lâu nhận",
-  "bao lau nhan",
-  "hỏa tốc",
-  "hoa toc",
-  "trong ngày",
-  "trong ngay",
-  "kiểm tra hàng",
-  "kiem tra hang",
-  "đổi trả",
-  "doi tra",
-  "trả hàng",
-  "tra hang",
-  "không vừa",
-  "khong vua",
-  "bị lỗi",
-  "bi loi",
-];
-
-const productKeywords = [
-  "mã",
-  "ma",
-  "sản phẩm",
-  "san pham",
-  "kg",
-  "cao",
-  "nặng",
-  "nang",
-  "vừa không",
-  "vua khong",
-  "mặc vừa",
-  "mac vua",
-  "mặc size",
-  "mac size",
-  "tư vấn size",
-  "tu van size",
-  "chất",
-  "chat",
-  "vải",
-  "vai",
-  "xù",
-  "xu",
-  "mát không",
-  "mat khong",
-  "mua lẻ",
-  "mua le",
-  "bộ này",
-  "bo nay",
-  "da dầu",
-  "da dau",
-  "da khô",
-  "da kho",
-  "hỗn hợp",
-  "hon hop",
-  "dùng được cho da",
-  "dung duoc cho da",
-];
-
-const weakProductKeywords = [
-  "size",
-  "sz",
-  "màu",
-  "mau",
-  "trắng",
-  "trang",
-  "đen",
-  "den",
-  "đỏ",
-  "do",
-  "xanh",
-];
-
-const howToBuyKeywords = [
-  "bấm mua",
-  "bam mua",
-  "mua thế nào",
-  "mua the nao",
-  "mua sao",
-  "đặt thế nào",
-  "dat the nao",
-  "đặt hàng sao",
-  "dat hang sao",
-  "chốt sao",
-  "chot sao",
-  "làm sao mua",
-  "lam sao mua",
-  "mua ở đâu",
-  "mua o dau",
-];
-
-const spamKeywords = [
-  "telegram",
-  "join telegram",
-  "whatsapp",
-  "zalo nhóm",
-  "zalo nhom",
-  "inbox riêng",
-  "ib riêng",
-];
-
-const potentialBuyerIntents: CommentIntent[] = [
-  "buy",
-  "ask_price",
-  "ask_stock",
-  "ask_shipping",
-  "ask_product",
-  "ask_how_to_buy",
-];
+export { normalizeComment } from "./comment-normalize.js";
+export { removeVietnameseAccents, stripMetadataNoise, META_NOISE_PATTERNS } from "./comment-normalize.js";
 
 function isQuestion(text: string) {
-  return (
-    text.includes("?") ||
-    includesAny(text, [
-      "không",
-      "khong",
-      "ko",
-      "bao nhiêu",
-      "bao nhieu",
-      "mấy",
-      "may",
-      "thế nào",
-      "the nao",
-      "được không",
-      "duoc khong",
-      "có được",
-      "co duoc",
-    ])
-  );
+  if (text.includes("?")) return true;
+  if (includesAny(text, ["không", "khong", "ko", "bao nhiêu", "bao nhieu", "mấy", "may", "thế nào", "the nao", "được không", "duoc khong", "có được", "co duoc", "nào", "nao", "hả", "ha", "nhỉ", "nhi", "ạ", "hong", "hông", "hk"])) return true;
+  if (/\bk\s*[?.!]*$/i.test(text)) return true;
+  if (/\b(k|ko|hk|hong|hông)\b/i.test(text)) return true;
+  return false;
 }
+
+const NEGATION_RE = /(khong\s+lay|không\s+lấy|khong\s+mua|không\s+mua|khong\s+can|không\s+cần|\bđừng\b|\bthoi\s+khong|\bthôi\s+không|\bhuy\b|\bcancel\b)/i;
+function isNegated(text: string) { return NEGATION_RE.test(text.toLowerCase()); }
 
 function priorityFromScore(finalScore: number): PriorityLevel {
   if (finalScore >= 85) return "high";
@@ -281,19 +88,26 @@ function priorityFromScore(finalScore: number): PriorityLevel {
 }
 
 function withLegacyOrderFlag(result: CommentRuleResult): CommentIntentResult {
-  return {
-    ...result,
-    canCreateOrder: result.canCreateDraftOrder,
-  };
+  return { ...result, canCreateOrder: result.canCreateDraftOrder };
 }
 
-export function analyzeLiveCommentIntent(commentText: string): CommentIntentResult {
-  const originalText = String(commentText || "").trim();
-  const text = normalizeComment(originalText);
+export function buildSuggestedReply(intent: CommentIntent, missingFields: string[]): string {
+  if (intent !== "buy" || missingFields.length === 0) return "";
+  const labels: Record<string, string> = { product: "mã sản phẩm", color: "màu", size: "size", quantity: "số lượng" };
+  const parts = missingFields.map((f) => labels[f] || f).filter(Boolean);
+  if (parts.length === 0) return "";
+  return `Shop hỏi thêm: ${parts.join(", ")} để chốt đơn nhé ạ.`;
+}
+
+export function analyzeLiveCommentIntent(commentText: string, opts?: { shopBoost?: boolean }): CommentIntentResult {
+  const cleanedText = stripMetadataNoise(String(commentText || "").trim());
+  const text = normalizeComment(cleanedText);
 
   if (!text) {
     return withLegacyOrderFlag({
       intent: "normal",
+      topic: "unknown",
+      confidence: 0,
       priorityLevel: "normal",
       finalScore: 0,
       canSuggestOrder: false,
@@ -301,15 +115,22 @@ export function analyzeLiveCommentIntent(commentText: string): CommentIntentResu
       isPotentialBuyer: false,
       isQuestion: false,
       matchedReasons: [],
+      parsedData: { productCode: null, color: null, size: null, quantity: null },
+      missingFields: [],
+      suggestedReply: "",
     });
   }
 
   const question = isQuestion(text);
+  const productReference = extractProductReference(text);
+  const textWordCount = text.split(/\s+/).filter(Boolean).length;
 
   const spamMatches = matchKeywords(text, spamKeywords);
   if (spamMatches.length > 0) {
     return withLegacyOrderFlag({
       intent: "spam",
+      topic: "unknown",
+      confidence: 0.95,
       priorityLevel: "normal",
       finalScore: 0,
       canSuggestOrder: false,
@@ -317,10 +138,15 @@ export function analyzeLiveCommentIntent(commentText: string): CommentIntentResu
       isPotentialBuyer: false,
       isQuestion: question,
       matchedReasons: spamMatches.map((item) => `Spam: ${item}`),
+      parsedData: { productCode: null, color: null, size: null, quantity: null },
+      missingFields: [],
+      suggestedReply: "",
     });
   }
 
   const buyMatches = matchKeywords(text, buyKeywords);
+  const alreadyOrderedMatches = matchKeywords(text, alreadyOrderedKeywords);
+  const productDemoMatches = matchKeywords(text, productDemoKeywords);
   const priceMatches = matchKeywords(text, priceKeywords);
   const stockMatches = matchKeywords(text, stockKeywords);
   const shippingMatches = matchKeywords(text, shippingKeywords);
@@ -330,6 +156,8 @@ export function analyzeLiveCommentIntent(commentText: string): CommentIntentResu
   const matchedReasons: string[] = [];
 
   for (const item of buyMatches) matchedReasons.push(`Có ý định mua: ${item}`);
+  for (const item of alreadyOrderedMatches) matchedReasons.push(`Đã đặt/mua rồi: ${item}`);
+  for (const item of productDemoMatches) matchedReasons.push(`Yêu cầu demo sản phẩm: ${item}`);
   for (const item of priceMatches) matchedReasons.push(`Hỏi giá/voucher: ${item}`);
   for (const item of stockMatches) matchedReasons.push(`Hỏi tồn kho: ${item}`);
   for (const item of shippingMatches) matchedReasons.push(`Hỏi vận chuyển: ${item}`);
@@ -338,52 +166,74 @@ export function analyzeLiveCommentIntent(commentText: string): CommentIntentResu
   for (const item of howToBuyMatches) matchedReasons.push(`Hỏi cách mua: ${item}`);
 
   let intent: CommentIntent = "normal";
-  let finalScore = 0;
+  let baseScore = 0;
 
-  if (buyMatches.length > 0) {
+  if (alreadyOrderedMatches.length > 0) {
+    intent = "already_ordered";
+    baseScore = 80;
+  } else if (buyMatches.length > 0) {
     intent = "buy";
-    finalScore = Math.max(finalScore, 90);
+    baseScore = 90;
+  } else if (productDemoMatches.length > 0) {
+    intent = "ask_product_demo";
+    baseScore = 88;
+  } else if (howToBuyMatches.length > 0) {
+    intent = "ask_how_to_buy";
+    baseScore = 85;
+  } else if (priceMatches.length > 0) {
+    intent = "ask_price";
+    baseScore = 75;
+  } else if (stockMatches.length > 0) {
+    intent = "ask_stock";
+    baseScore = 70;
+  } else if (shippingMatches.length > 0) {
+    intent = "ask_shipping";
+    baseScore = 65;
+  } else if (productMatches.length > 0) {
+    intent = "ask_product";
+    baseScore = 60;
+  } else if (weakProductMatches.length > 0) {
+    intent = "ask_product";
+    baseScore = 30;
   }
 
-  if (howToBuyMatches.length > 0) {
-    intent = intent === "buy" ? intent : "ask_how_to_buy";
-    finalScore = Math.max(finalScore, 85);
-  }
+  // ponytail: parse before scoring so bonuses can use entities; keep it cheap
+  const earlyParsed = parseCommentData(text, productReference);
+  let bonus = 0;
+  // question: +25 keeps normal question above casual threshold, otherwise +5
+  if (question) bonus += intent === "normal" ? 25 : 5;
+  if (productReference) bonus += 10;
+  else if (productMatches.length > 0) bonus += 5;
+  // ponytail: color/size entity +5, but not double-count weak (weak already is color/size)
+  if ((earlyParsed.color || earlyParsed.size) && weakProductMatches.length === 0) bonus += 5;
+  if (earlyParsed.quantity) bonus += 5;
+  if (isNegated(text)) bonus -= 20;
+  if (opts?.shopBoost) bonus += 25;
+  let finalScore = Math.max(0, Math.min(100, baseScore + bonus));
 
-  if (priceMatches.length > 0) {
-    intent = intent === "buy" ? intent : "ask_price";
-    finalScore = Math.max(finalScore, 75);
-  }
-
-  if (stockMatches.length > 0) {
-    intent = intent === "buy" ? intent : "ask_stock";
-    finalScore = Math.max(finalScore, 70);
-  }
-
-  if (shippingMatches.length > 0) {
-    intent = intent === "buy" ? intent : "ask_shipping";
-    finalScore = Math.max(finalScore, 65);
-  }
-
-  if (productMatches.length > 0) {
-    intent = intent === "buy" ? intent : "ask_product";
-    finalScore = Math.max(finalScore, 60);
-  }
-
-  if (weakProductMatches.length > 0) {
-    intent = intent === "normal" ? "ask_product" : intent;
-    // ponytail: color/size alone is useful for sorting, not enough for medium priority.
-    finalScore = Math.max(finalScore, 30);
-  }
+  const hasStrongSignal = finalScore >= 60;
+  const topic = detectTopic(text, hasStrongSignal);
+  const totalMatched =
+    buyMatches.length +
+    alreadyOrderedMatches.length +
+    productDemoMatches.length +
+    priceMatches.length +
+    stockMatches.length +
+    shippingMatches.length +
+    productMatches.length +
+    weakProductMatches.length +
+    howToBuyMatches.length;
+  const confidence = scoreConfidence(totalMatched, totalMatched >= 2, Boolean(productReference), textWordCount);
 
   if (question && intent === "normal") {
-    finalScore = Math.max(finalScore, 25);
     matchedReasons.push("Có dấu hiệu là câu hỏi của khách");
   }
 
   if (matchedReasons.length === 0) {
     return withLegacyOrderFlag({
       intent: "normal",
+      topic,
+      confidence,
       priorityLevel: "normal",
       finalScore: 0,
       canSuggestOrder: false,
@@ -391,21 +241,31 @@ export function analyzeLiveCommentIntent(commentText: string): CommentIntentResu
       isPotentialBuyer: false,
       isQuestion: question,
       matchedReasons: [],
+      productReference,
+      parsedData: { productCode: null, color: null, size: null, quantity: null },
+      missingFields: [],
+      suggestedReply: "",
     });
   }
 
-  const canSuggestOrder = intent === "buy";
-  // ponytail: product/variant/quantity validation lives in service, so base rules only suggest.
-  const canCreateDraftOrder = false;
+  const parsedData = parseCommentData(text, productReference);
+  const missingFields = computeMissingFields(parsedData, intent);
+  const suggestedReply = buildSuggestedReply(intent, missingFields);
 
   return withLegacyOrderFlag({
     intent,
+    topic,
+    confidence,
     priorityLevel: priorityFromScore(finalScore),
     finalScore,
-    canSuggestOrder,
-    canCreateDraftOrder,
-    isPotentialBuyer: potentialBuyerIntents.includes(intent),
+    canSuggestOrder: intent === "buy",
+    canCreateDraftOrder: intent === "buy" && Boolean(productReference),
+    isPotentialBuyer: (potentialBuyerIntents as readonly string[]).includes(intent),
     isQuestion: question,
     matchedReasons,
+    productReference,
+    parsedData,
+    missingFields,
+    suggestedReply,
   });
 }

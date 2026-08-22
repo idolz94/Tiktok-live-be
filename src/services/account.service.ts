@@ -21,7 +21,7 @@ const publicUserColumns = {
   updatedAt: users.updatedAt,
 };
 
-type PublicUser = typeof publicUserColumns extends Record<string, infer T> ? Record<keyof typeof publicUserColumns, unknown> : never;
+type PublicUser = Record<keyof typeof publicUserColumns, unknown>;
 
 export type AccountContext = {
   userId: string;

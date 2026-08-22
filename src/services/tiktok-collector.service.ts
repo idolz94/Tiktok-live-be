@@ -15,7 +15,9 @@ import {
   resolveShopForCollectorEvent,
 } from "./internal-live-ingest.service.js";
 import { endLiveSession } from "./live-sessions.service.js";
+import { upsertBuyingIntentQueueFromComment } from "./buying-intent-queue.service.js";
 import { saveLiveComment } from "./live-comments.service.js";
+import { matchPresetByComment } from "./product-presets.service.js";
 import { updateTikTokChannelProfile } from "./tiktok-channels.service.js";
 
 // ─── Room state ───────────────────────────────────────────────────────────────
@@ -95,9 +97,6 @@ async function ingestComment(room: RoomState, data: any) {
     avatarUrl,
     commentText,
     text: commentText,
-    intent: "normal",
-    priorityLevel: "normal",
-    finalScore: 0,
     isOrderCreated: false,
     createdAt,
     rawPayload: data,
@@ -124,6 +123,9 @@ async function ingestComment(room: RoomState, data: any) {
     comment: {
       ...commentPayload,
       intent: comment.intent,
+      topic: comment.topic,
+      confidence: comment.confidence,
+      productReference: comment.productReference,
       priorityLevel: comment.priorityLevel,
       finalScore: comment.finalScore,
       canCreateOrder: comment.canCreateOrder,
@@ -138,6 +140,37 @@ async function ingestComment(room: RoomState, data: any) {
   };
 
   sendRoomSse(room, shop.id, "COMMENT", realtimePayload);
+
+  try {
+    const item = await upsertBuyingIntentQueueFromComment(comment);
+    if (item) sendRoomSse(room, shop.id, "BUYING_INTENT_UPDATED", { item });
+  } catch (e: any) {
+    // ponytail: queue is secondary; never drop the live comment because queue upsert failed.
+    logger.warn({ err: e?.message, commentId: comment.id }, "[TIKTOK] buying intent queue failed");
+  }
+
+  const recommendationScore = Number(comment.finalScore ?? comment.confidence ?? 0);
+  if (comment.intent === "buy" && comment.canCreateOrder && comment.matchedProductCode && recommendationScore >= 85) {
+    const matchedPreset = await matchPresetByComment(shop.id, comment.commentText || commentText);
+    if (matchedPreset) {
+      sendRoomSse(room, shop.id, "ORDER_RECOMMENDED", {
+        shopId: shop.id,
+        liveSessionId: session.id,
+        commentId: comment.id,
+        tiktokUsername: comment.tiktokUsername,
+        displayName: comment.displayName,
+        matchedPreset: {
+          code: matchedPreset.code,
+          name: matchedPreset.name,
+          color: matchedPreset.color,
+          price: matchedPreset.price,
+        },
+        confidence: recommendationScore,
+        commentText: comment.commentText,
+        createdAt,
+      });
+    }
+  }
 
   await enqueueLiveEvent("comment-saved", {
     shopId: shop.id,

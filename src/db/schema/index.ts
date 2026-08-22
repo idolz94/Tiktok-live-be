@@ -414,6 +414,9 @@ export const liveComments = pgTable("live_comments", {
   matchedReasons: jsonb("matched_reasons").default([]),
   ruleVersion: text("rule_version").default("comment-rules-v1"),
   matchedProductCode: text("matched_product_code"),
+  topic: text("topic"),
+  confidence: real("confidence"),
+  productReference: text("product_reference"),
   isOrderCreated: boolean("is_order_created").default(false),
   orderId: uuid("order_id"),
   rawPayload: jsonb("raw_payload"),
@@ -421,6 +424,34 @@ export const liveComments = pgTable("live_comments", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   uniqueIndex("live_comments_session_external_comment_id_unique").on(table.liveSessionId, table.externalCommentId),
+]);
+
+// ─── buying_intent_queue ──────────────────────────────────────────────────────
+export const buyingIntentQueue = pgTable("buying_intent_queue", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  shopId: uuid("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
+  liveSessionId: uuid("live_session_id").notNull().references(() => liveSessions.id, { onDelete: "cascade" }),
+  tiktokUsername: text("tiktok_username").notNull(),
+  displayName: text("display_name"),
+  avatarUrl: text("avatar_url"),
+  intent: text("intent").notNull().default("buy"),
+  priorityLevel: text("priority_level").notNull().default("high"),
+  finalScore: real("final_score").default(0),
+  commentCount: integer("comment_count").default(1),
+  latestCommentId: uuid("latest_comment_id").references(() => liveComments.id, { onDelete: "set null" }),
+  latestCommentText: text("latest_comment_text"),
+  latestCommentAt: timestamp("latest_comment_at", { withTimezone: true }),
+  parsedData: jsonb("parsed_data").default({}),
+  suggestedReply: text("suggested_reply"),
+  missingFields: text("missing_fields").array().default([]),
+  canCreateDraftOrder: boolean("can_create_draft_order").default(false),
+  status: text("status").notNull().default("pending"),
+  handledAt: timestamp("handled_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("buying_intent_queue_session_username_unique").on(table.liveSessionId, table.tiktokUsername),
+  index("buying_intent_queue_shop_session_status_idx").on(table.shopId, table.liveSessionId, table.status),
 ]);
 
 // ─── payments ─────────────────────────────────────────────────────────────────
