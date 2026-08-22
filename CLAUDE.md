@@ -247,7 +247,7 @@ Quy tắc:
 * Sau khi verify JWT, backend resolve `userId` từ payload.
 * Protected route phải có `req.user` hoặc context tương đương.
 * Protected shop route phải check user có quyền với shop.
-* Protected app action phải check license còn active.
+* Protected app action phải check license còn active — dùng `requireUsableAccountContext` (trả 403 khi hết hạn), không dùng `requireShopId` cho route nghiệp vụ.
 * Access token ngắn hạn (15–60 phút).
 * Refresh token dài hạn, lưu trong DB hoặc Redis để có thể revoke.
 * Không đưa refresh token ra response body nếu dùng httpOnly cookie.
@@ -258,19 +258,19 @@ User mới:
 ```txt
 1. Client gọi POST /api/auth/register.
 2. Backend tạo `users`.
-3. Backend tạo `user_licenses` mặc định 1 tháng.
-4. Backend tạo shop mặc định.
-5. Backend tạo shop_settings mặc định.
-6. Backend trả access token + refresh token.
+3. Backend gọi bootstrapAccountContext → tạo `shops` + `shopMembers` + trial `shopLicenses` trong cùng transaction.
+4. Backend tạo default TikTok channel nếu có tiktokId.
+5. Backend trả access token + refresh token (httpOnly cookie).
 ```
 
 License mặc định:
 
 ```txt
 plan = trial
-status = active
+status = trial
 starts_at = now
-expires_at = now + 1 month
+trial_ends_at = now + TRIAL_DAYS (từ env, đọc limits từ licensePlans.code='trial')
+is_current = true
 ```
 
 ---
@@ -329,6 +329,7 @@ MOBILE_APP_KEY=dev_mobile_key
 NODE_INTERNAL_API_KEY=change_me
 COLLECTOR_BASE_URL=http://localhost:8765
 COLLECTOR_CONTROL_API_KEY=change_me
+TRIAL_DAYS=14
 ```
 
 ### Production
@@ -349,6 +350,7 @@ MOBILE_APP_KEY=your_strong_mobile_app_key
 NODE_INTERNAL_API_KEY=your_strong_internal_key
 COLLECTOR_BASE_URL=https://collector-domain.com
 COLLECTOR_CONTROL_API_KEY=your_strong_collector_key
+TRIAL_DAYS=14
 ```
 
 Optional sau này:
@@ -584,22 +586,37 @@ PATCH  /api/orders/:orderId/status
 ### License
 
 ```txt
-GET  /api/licenses/current
-POST /api/licenses/refresh
+GET  /api/licenses/current        → license hiện tại + canUseApp/reason (public)
+POST /api/licenses/refresh       → refresh license state
+
+# Admin (yêu cầu role manager/admin + audit log)
+POST  /api/admin/licenses/activate
+GET   /api/admin/licenses                 (list cross-shop, filter/sort)
+GET   /api/admin/licenses/:shopId         (detail + plan defaults)
+PATCH /api/admin/licenses/:shopId/tier    (đổi plan, giữ nguyên hạn)
+PATCH /api/admin/licenses/:shopId/extend  (gia hạn N tháng)
+PATCH /api/admin/licenses/:shopId/limits  (override maxOrders/maxLiveSessions/maxMembers/maxTiktokAccounts)
+GET   /api/admin/licenses/:shopId/usage   (usage tháng hiện tại + max)
+GET   /api/admin/licenses/:shopId/history (timeline từ admin_audit_logs)
 ```
+
+Enforcement:
+
+* `maxOrdersPerMonth` → `order-core.service: assertOrderLimitNotExceeded`
+* `maxLiveSessionsPerMonth` → `live-sessions.service: startLiveSession / getOrCreateRunningLiveSession`
+* `maxTiktokAccounts` → `tiktok-channels.service: createTikTokChannel`
+* `maxMembers` → `account.service: addShopMember()` (bọi flow thêm thành viên phải qua hàm này)
+* Hết hạn / inactive → mọi route shop nghiệp vụ dùng `requireUsableAccountContext` sẽ trả `403`; `bootstrap / payment / license/current` được miễn để user vẫn gia hạn được.
+* Trial tạo trong `bootstrapAccountContext` bằng `db.transaction` + đọc defaults từ `licensePlans.code='trial'`.
 
 ---
 
 ### Payments
 
 ```txt
-GET  /api/payments
-POST /api/payments/webhook
+POST /api/payments/checkout        (tạo checkout thủ công)
+POST /api/payments/manual-confirm  (xác nhận paymentId thủ công)
 ```
-
-Payment chưa cần implement nếu chưa có flow thực tế.
-
-Không tự tạo payment logic giả nếu user chưa yêu cầu.
 
 ---
 

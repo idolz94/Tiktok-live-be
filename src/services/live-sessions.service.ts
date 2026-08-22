@@ -4,6 +4,7 @@ import { liveSessions, liveComments } from "../db/schema/index.js";
 import { calcDurationSeconds, nowIso } from "../utils/date.js";
 import { isUuid } from "../utils/id.js";
 import { normalizeAtUsername } from "../utils/tiktok.js";
+import { assertLiveSessionLimitNotExceeded } from "./license.service.js";
 
 export async function findLiveSessionByExternalId({
   shopId,
@@ -53,6 +54,8 @@ export async function startLiveSession({
       .returning();
     return updated;
   }
+
+  await assertLiveSessionLimitNotExceeded(shopId);
 
   const [created] = await db
     .insert(liveSessions)
@@ -266,6 +269,8 @@ export async function getOrCreateRunningLiveSession({
     .limit(1);
 
   if (runningRows[0]) return runningRows[0];
+
+  await assertLiveSessionLimitNotExceeded(shopId);
 
   const [created] = await db
     .insert(liveSessions)

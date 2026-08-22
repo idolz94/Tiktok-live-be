@@ -3,7 +3,7 @@ import { z } from "zod";
 import { asyncHandler } from "../lib/async-handler.js";
 import { ok, mutateOk, mutateCreated } from "../lib/response.js";
 import { requireAuth } from "../middlewares/auth.js";
-import { requireShopId } from "../services/account.service.js";
+import { requireUsableAccountContext } from "../services/account.service.js";
 import {
   listShopAddresses,
   createShopAddress,
@@ -29,8 +29,8 @@ router.use(requireAuth);
 router.get(
   "/",
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
-    const addresses = await listShopAddresses(shopId);
+    const ctx = await requireUsableAccountContext(request);
+    const addresses = await listShopAddresses(ctx.shop.id);
     return ok(response, { addresses });
   }),
 );
@@ -38,9 +38,9 @@ router.get(
 router.post(
   "/",
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
+    const ctx = await requireUsableAccountContext(request);
     const body = addressBodySchema.parse(request.body || {});
-    const address = await createShopAddress(shopId, body);
+    const address = await createShopAddress(ctx.shop.id, body);
     return mutateCreated(response, "Thêm địa chỉ thành công.", { address });
   }),
 );
@@ -48,9 +48,9 @@ router.post(
 router.patch(
   "/:addressId",
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
+    const ctx = await requireUsableAccountContext(request);
     const body = addressBodySchema.parse(request.body || {});
-    const address = await updateShopAddress(shopId, String(request.params.addressId), body);
+    const address = await updateShopAddress(ctx.shop.id, String(request.params.addressId), body);
     return mutateOk(response, "Cập nhật địa chỉ thành công.", { address });
   }),
 );
@@ -58,8 +58,8 @@ router.patch(
 router.delete(
   "/:addressId",
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
-    await deleteShopAddress(shopId, String(request.params.addressId));
+    const ctx = await requireUsableAccountContext(request);
+    await deleteShopAddress(ctx.shop.id, String(request.params.addressId));
     return mutateOk(response, "Đã xoá địa chỉ.");
   }),
 );

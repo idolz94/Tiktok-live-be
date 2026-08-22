@@ -4,6 +4,7 @@ import { tiktokChannels, shops } from "../db/schema/index.js";
 import { badRequest, notFound } from "../lib/api-error.js";
 import { env } from "../config/env.js";
 import { normalizeAtUsername } from "../utils/tiktok.js";
+import { assertTiktokAccountLimitNotExceeded } from "./license.service.js";
 
 interface TikTokProfile {
   displayName: string | null;
@@ -108,6 +109,8 @@ export async function createTikTokChannel({
 }) {
   const normalizedUsername = normalizeAtUsername(tiktokUsername);
   if (!normalizedUsername) throw badRequest("Thiếu TikTok username.");
+
+  await assertTiktokAccountLimitNotExceeded(shopId);
 
   if (isDefault) {
     await clearDefaultTikTokChannel(shopId);

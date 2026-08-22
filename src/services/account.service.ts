@@ -3,7 +3,7 @@ import { eq, and } from "drizzle-orm";
 import { db } from "../lib/db.js";
 import { users, shops, shopMembers, orders, liveSessions } from "../db/schema/index.js";
 import { forbidden, unauthorized } from "../lib/api-error.js";
-import { createTrialLicense, getCurrentLicense, getLicenseState } from "./license.service.js";
+import { createTrialLicense, getCurrentLicense, getLicenseState, assertMemberLimitNotExceeded } from "./license.service.js";
 
 const publicUserColumns = {
   id: users.id,
@@ -92,18 +92,20 @@ export async function bootstrapAccountContext(request: Request): Promise<Account
   const user = userRows[0] ?? null;
   const shopMember = memberRows[0] ?? null;
 
-  // Auto-provision shop + membership if missing
+  // Auto-provision shop + membership + trial license atomically
   if (!shopMember?.shopId && user) {
-    const [newShop] = await db
-      .insert(shops)
-      .values({ ownerId: userId, name: "Shop mới" })
-      .returning();
+    await db.transaction(async (tx) => {
+      const [newShop] = await tx
+        .insert(shops)
+        .values({ ownerId: userId, name: "Shop mới" })
+        .returning();
 
-    await db
-      .insert(shopMembers)
-      .values({ shopId: newShop.id, userId, role: "owner", status: "active" });
+      await tx
+        .insert(shopMembers)
+        .values({ shopId: newShop.id, userId, role: "owner", status: "active" });
 
-    await createTrialLicense(newShop.id);
+      await createTrialLicense(newShop.id, tx);
+    });
     return getAccountContext(request);
   }
 
@@ -147,4 +149,24 @@ export async function getShopActivityFlags(shopId: string): Promise<{ hasOrders:
     db.select({ id: liveSessions.id }).from(liveSessions).where(eq(liveSessions.shopId, shopId)).limit(1),
   ]);
   return { hasOrders: orderRow.length > 0, hasHistory: historyRow.length > 0 };
+}
+
+export async function addShopMember(input: {
+  shopId: string;
+  userId: string;
+  role?: string;
+  invitedBy?: string | null;
+}): Promise<typeof shopMembers.$inferSelect> {
+  await assertMemberLimitNotExceeded(input.shopId);
+  const [row] = await db
+    .insert(shopMembers)
+    .values({
+      shopId: input.shopId,
+      userId: input.userId,
+      role: input.role ?? "staff",
+      status: "active",
+      invitedBy: input.invitedBy ?? null,
+    })
+    .returning();
+  return row;
 }

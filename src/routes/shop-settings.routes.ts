@@ -3,7 +3,7 @@ import { z } from "zod";
 import { asyncHandler } from "../lib/async-handler.js";
 import { ok, mutateOk } from "../lib/response.js";
 import { requireAuth } from "../middlewares/auth.js";
-import { requireShopId } from "../services/account.service.js";
+import { requireUsableAccountContext } from "../services/account.service.js";
 import {
   getInvoiceContent,
   getPrinterSettings,
@@ -27,8 +27,8 @@ router.get(
   "/product-defaults",
   requireAuth,
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
-    const data = await getProductDefaults(shopId);
+    const ctx = await requireUsableAccountContext(request);
+    const data = await getProductDefaults(ctx.shop.id);
     return ok(response, data);
   }),
 );
@@ -38,9 +38,9 @@ router.patch(
   "/product-defaults",
   requireAuth,
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
+    const ctx = await requireUsableAccountContext(request);
     const body = patchProductDefaultsSchema.parse(request.body || {});
-    const data = await upsertProductDefaults(shopId, body);
+    const data = await upsertProductDefaults(ctx.shop.id, body);
     return mutateOk(response, "Lưu cài đặt thành công.", data);
   }),
 );
@@ -56,8 +56,8 @@ router.get(
   "/printer",
   requireAuth,
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
-    const data = await getPrinterSettings(shopId);
+    const ctx = await requireUsableAccountContext(request);
+    const data = await getPrinterSettings(ctx.shop.id);
     return ok(response, data);
   }),
 );
@@ -67,9 +67,9 @@ router.patch(
   "/printer",
   requireAuth,
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
+    const ctx = await requireUsableAccountContext(request);
     const body = patchPrinterSettingsSchema.parse(request.body || {});
-    const data = await upsertPrinterSettings(shopId, body);
+    const data = await upsertPrinterSettings(ctx.shop.id, body);
     return mutateOk(response, "Lưu cài đặt máy in thành công.", data);
   }),
 );
@@ -85,8 +85,8 @@ router.get(
   "/invoice-content",
   requireAuth,
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
-    const data = await getInvoiceContent(shopId);
+    const ctx = await requireUsableAccountContext(request);
+    const data = await getInvoiceContent(ctx.shop.id);
     return ok(response, data);
   }),
 );
@@ -96,9 +96,9 @@ router.patch(
   "/invoice-content",
   requireAuth,
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
+    const ctx = await requireUsableAccountContext(request);
     const body = patchInvoiceContentSchema.parse(request.body || {});
-    const data = await upsertInvoiceContent(shopId, body);
+    const data = await upsertInvoiceContent(ctx.shop.id, body);
     return mutateOk(response, "Lưu nội dung hóa đơn thành công.", data);
   }),
 );

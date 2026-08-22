@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { asyncHandler } from "../lib/async-handler.js";
 import { ok } from "../lib/response.js";
 import { requireAuth } from "../middlewares/auth.js";
-import { requireShopId } from "../services/account.service.js";
+import { requireUsableAccountContext } from "../services/account.service.js";
 import { db } from "../lib/db.js";
 import { orderShipments, orders } from "../db/schema/index.js";
 
@@ -14,7 +14,8 @@ router.use(requireAuth);
 router.get(
   "/",
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
+    const ctx = await requireUsableAccountContext(request);
+    const shopId = ctx.shop.id;
     const limit = request.query.limit ? Math.min(Number(request.query.limit), 200) : 100;
     const offset = request.query.offset ? Number(request.query.offset) : 0;
 

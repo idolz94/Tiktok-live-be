@@ -1,8 +1,9 @@
-import { eq, and, or, lte, gt, ilike, isNotNull, count, asc, sql } from "drizzle-orm";
+import { eq, and, or, lte, gt, gte, lt, ilike, isNotNull, count, asc, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { db, type DbOrTx } from "../lib/db.js";
 import { shops, shopLicenses, licensePlans, users, shopMembers, orders, liveSessions, tiktokChannels } from "../db/schema/index.js";
 import { env } from "../config/env.js";
+import { badRequest } from "../lib/api-error.js";
 import { addDays } from "../utils/date.js";
 import { seedLicensePlans } from "../db/seed-license-plans.js";
 
@@ -56,6 +57,9 @@ export async function createTrialLicense(shopId: string, tx: DbOrTx = db) {
   const now = new Date();
   const trialEndsAt = addDays(now, env.trialDays).toISOString();
 
+  // Use defaults from the trial plan so limits stay in sync with admin config
+  const [trialPlan] = await db.select().from(licensePlans).where(eq(licensePlans.code, "trial")).limit(1);
+
   const [license] = await tx
     .insert(shopLicenses)
     .values({
@@ -66,10 +70,10 @@ export async function createTrialLicense(shopId: string, tx: DbOrTx = db) {
       expiredAt: null,
       trialEndsAt: new Date(trialEndsAt),
       isCurrent: true,
-      maxOrdersPerMonth: 200,
-      maxLiveSessionsPerMonth: null,
-      maxMembers: 1,
-      maxTiktokAccounts: 1,
+      maxOrdersPerMonth: trialPlan?.maxOrdersPerMonth ?? 200,
+      maxLiveSessionsPerMonth: trialPlan?.maxLiveSessionsPerMonth ?? null,
+      maxMembers: trialPlan?.maxMembers ?? 1,
+      maxTiktokAccounts: trialPlan?.maxTiktokAccounts ?? 1,
       price: 0,
       currency: "VND",
       paymentStatus: "unpaid",
@@ -373,6 +377,53 @@ export async function updateLicenseLimits({
     Object.fromEntries(LICENSE_LIMIT_FIELDS.map((f) => [f, l[f]]));
 
   return { license: updated, before: pick(license), after: pick(updated) };
+}
+
+// ─── Enforcement helpers (throw 400 when limit exceeded) ─────────────────────
+
+export async function assertLiveSessionLimitNotExceeded(shopId: string): Promise<void> {
+  const license = await getCurrentLicense(shopId);
+  const limit = license?.maxLiveSessionsPerMonth ?? null;
+  if (limit === null) return;
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(liveSessions)
+    .where(and(eq(liveSessions.shopId, shopId), gte(liveSessions.startedAt, monthStart), lt(liveSessions.startedAt, monthEnd)));
+  const used = row?.count ?? 0;
+  if (used >= limit) {
+    throw badRequest(`Shop đã tạo ${used}/${limit} phiên live trong tháng này. Vui lòng nâng cấp gói để tiếp tục.`);
+  }
+}
+
+export async function assertMemberLimitNotExceeded(shopId: string): Promise<void> {
+  const license = await getCurrentLicense(shopId);
+  const limit = license?.maxMembers ?? null;
+  if (limit === null) return;
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(shopMembers)
+    .where(and(eq(shopMembers.shopId, shopId), eq(shopMembers.status, "active")));
+  const used = row?.count ?? 0;
+  if (used >= limit) {
+    throw badRequest(`Shop đã có ${used}/${limit} thành viên. Vui lòng nâng cấp gói để thêm thành viên.`);
+  }
+}
+
+export async function assertTiktokAccountLimitNotExceeded(shopId: string): Promise<void> {
+  const license = await getCurrentLicense(shopId);
+  const limit = license?.maxTiktokAccounts ?? null;
+  if (limit === null) return;
+  const [row] = await db
+    .select({ count: sql<number>`count(distinct ${tiktokChannels.tiktokUsername})::int` })
+    .from(tiktokChannels)
+    .where(eq(tiktokChannels.shopId, shopId));
+  const used = row?.count ?? 0;
+  if (used >= limit) {
+    throw badRequest(`Shop đã có ${used}/${limit} tài khoản TikTok. Vui lòng nâng cấp gói để thêm tài khoản.`);
+  }
 }
 
 // ─── Admin: usage this month ─────────────────────────────────────────────────
