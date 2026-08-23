@@ -74,20 +74,20 @@ import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../lib/async-handler.js";
 import { ok } from "../lib/response.js";
-import { requireInternalApiKey } from "../middlewares/internal-api-key.js";
+import { requireAuth } from "../middlewares/auth.js";
+import { requireManager } from "../middlewares/require-role.js";
 
 const router = Router();
-router.use(requireInternalApiKey); // Tất cả admin routes đều cần key này
 
-const schema = z.object({ ... });
-
-router.get("/example", asyncHandler(async (request, response) => {
+router.get("/example", requireAuth, requireManager, asyncHandler(async (request, response) => {
   // logic...
   return ok(response, { data });
 }));
 
 export default router;
 ```
+
+> Admin routes hiện tại dùng `requireAuth` + `requireManager` (JWT + role manager/admin), không dùng `x-internal-api-key`.
 
 ## Response format bắt buộc
 
@@ -104,25 +104,17 @@ throw forbidden("Không có quyền.");
 
 ## Admin Auth
 
-Tất cả admin routes hiện tại đều dùng `requireInternalApiKey` middleware:
-
-```
-x-internal-api-key: <NODE_INTERNAL_API_KEY>
-```
-
-Key này đặt trong `.env` của backend. Dashboard gọi kèm header này trong mọi request đến `/api/admin/*`.
-
-> **Bảo mật:** Dashboard phải gọi admin API từ server-side (Next.js API routes hoặc tương đương), không gọi thẳng từ browser để tránh lộ key.
+Tất cả admin routes (`/api/admin/*`) dùng `requireAuth` + `requireManager` — JWT Bearer token + role `manager` hoặc `admin`. Không dùng `x-internal-api-key`.
 
 ## Endpoints hiện có trong backend
 
 ### GET `/api/admin/licenses/:shopId`
 
-Lấy license hiện tại của shop.
+Lấy license hiện tại của shop (kèm `planDefaults` để so sánh override).
 
 ```
 GET /api/admin/licenses/:shopId
-x-internal-api-key: <key>
+Authorization: Bearer <JWT manager/admin>
 ```
 
 ### POST `/api/admin/licenses/activate`
@@ -131,7 +123,7 @@ Kích hoạt hoặc gia hạn license.
 
 ```
 POST /api/admin/licenses/activate
-x-internal-api-key: <key>
+Authorization: Bearer <JWT manager/admin>
 Content-Type: application/json
 
 {
@@ -149,11 +141,23 @@ Content-Type: application/json
 
 ```
 PATCH /api/admin/licenses/:shopId/tier
-x-internal-api-key: <key>
+Authorization: Bearer <JWT manager/admin>
 Content-Type: application/json
 
 { "planCode": "pro" }
 ```
+
+### Các endpoint license khác (manager+)
+
+```
+GET  /api/admin/licenses?query=&plan=&status=&expiringSoon=&sortBy=&page=&limit=
+GET  /api/admin/licenses/:shopId/usage
+GET  /api/admin/licenses/:shopId/history
+PATCH /api/admin/licenses/:shopId/extend   { months: 1..60 }
+PATCH /api/admin/licenses/:shopId/limits   { maxOrdersPerMonth?, maxLiveSessionsPerMonth?, maxMembers?, maxTiktokAccounts? }
+```
+
+Tất cả đều dùng `Authorization: Bearer <JWT manager/admin>` và ghi `admin_audit_logs`.
 
 ### POST `/api/admin/seed-plans`
 
@@ -170,7 +174,7 @@ Outsource team thêm vào `src/routes/admin.routes.ts` và `src/services/` tươ
 **Request:**
 ```
 GET /api/admin/users?username=keyword&page=1&limit=20
-x-internal-api-key: <key>
+Authorization: Bearer <JWT manager/admin>
 ```
 
 | Query param | Kiểu | Bắt buộc | Mô tả |
@@ -255,7 +259,7 @@ export async function searchUsers({ username, page = 1, limit = 20 }: {
 
 ```
 GET /api/admin/users/:userId
-x-internal-api-key: <key>
+Authorization: Bearer <JWT manager/admin>
 ```
 
 **Response:**
@@ -331,73 +335,7 @@ x-internal-api-key: <key>
 
 ## Auth flow
 
-Admin dashboard dùng **Internal API Key** (`NODE_INTERNAL_API_KEY`) để gọi tất cả `/api/admin/*`.
-
-```
-Admin mở Dashboard
-  ↓ Nhập username/password trên form login
-  ↓
-Dashboard gọi: POST /api/auth/login (backend)
-  ↓ Nhận accessToken + refreshToken
-  ↓ Lưu trong httpOnly cookie hoặc memory
-  ↓
-Dashboard gọi admin API qua Next.js API Routes (BFF):
-  Browser → Next.js API Route → Backend /api/admin/*
-                                (đính kèm x-internal-api-key từ env server)
-```
-
-> **Lý do dùng BFF:** `NODE_INTERNAL_API_KEY` phải giữ ở server-side, không được xuất hiện trong JavaScript bundle của browser.
-
-### Ví dụ Next.js API Route (BFF proxy)
-
-```ts
-// app/api/admin/users/route.ts
-import { NextRequest, NextResponse } from "next/server";
-
-export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const username = searchParams.get("username") ?? "";
-
-  const res = await fetch(
-    `${process.env.BACKEND_URL}/api/admin/users?username=${encodeURIComponent(username)}`,
-    {
-      headers: {
-        "x-internal-api-key": process.env.NODE_INTERNAL_API_KEY!,
-      },
-    }
-  );
-
-  const data = await res.json();
-  return NextResponse.json(data, { status: res.status });
-}
-```
-
-```ts
-// app/api/admin/licenses/activate/route.ts
-export async function POST(req: NextRequest) {
-  const body = await req.json();
-
-  const res = await fetch(`${process.env.BACKEND_URL}/api/admin/licenses/activate`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-internal-api-key": process.env.NODE_INTERNAL_API_KEY!,
-    },
-    body: JSON.stringify(body),
-  });
-
-  const data = await res.json();
-  return NextResponse.json(data, { status: res.status });
-}
-```
-
-## Biến môi trường Dashboard
-
-```env
-# .env.local (không commit)
-BACKEND_URL=http://localhost:3001
-NODE_INTERNAL_API_KEY=<do Lumi cung cấp>
-```
+Admin dashboard đăng nhập bằng `POST /api/auth/login` với tài khoản có `role = manager` hoặc `admin`, nhận JWT và dùng `Authorization: Bearer <token>` cho mọi `/api/admin/*`.
 
 ## Màn hình cần xây dựng
 
@@ -508,7 +446,7 @@ Gọi: `PATCH /api/admin/licenses/:shopId/tier` (qua BFF proxy)
 - [ ] Xem chi tiết user
 - [ ] Gia hạn license (modal)
 - [ ] Đổi tier license (modal)
-- [ ] `NODE_INTERNAL_API_KEY` chỉ tồn tại trong server-side env, không lộ ra browser bundle
+- [ ] Admin gọi `/api/admin/*` bằng JWT `manager`/`admin` (không để lộ key ở browser bundle)
 - [ ] Hiển thị lỗi rõ ràng khi API trả về `ok: false`
 - [ ] Build production không có lỗi
 
@@ -518,7 +456,7 @@ Gọi: `PATCH /api/admin/licenses/:shopId/tier` (qua BFF proxy)
 
 | Quy tắc | |
 |---|---|
-| `NODE_INTERNAL_API_KEY` chỉ ở server-side | Không được xuất hiện trong JS bundle |
+| Admin JWT chỉ ở httpOnly cookie / memory | Không được xuất hiện trong JS bundle nếu không cần |
 | Không commit `.env` | Thêm vào `.gitignore` |
 | Không log token | Không `console.log` accessToken |
 | Không sửa Mobile API contracts | Các endpoint mobile đang dùng không được thay đổi response shape |

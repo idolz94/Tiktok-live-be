@@ -7,7 +7,7 @@ import { requireAuth } from "../middlewares/auth.js";
 import { ApiError } from "../lib/api-error.js";
 import { db } from "../lib/db.js";
 import { users, shops } from "../db/schema/index.js";
-import { bootstrapAccountContext, getShopActivityFlags, requireShopId } from "../services/account.service.js";
+import { bootstrapAccountContext, getShopActivityFlags, requireUsableAccountContext } from "../services/account.service.js";
 import {
   listTikTokChannelsWithBackfill,
   updateTikTokChannel,
@@ -72,10 +72,10 @@ router.patch(
   "/tiktok-channels/:channelId",
   requireAuth,
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
+    const ctx = await requireUsableAccountContext(request);
     const body = updateChannelSchema.parse(request.body || {});
     const channel = await updateTikTokChannel({
-      shopId,
+      shopId: ctx.shop.id,
       channelId: String(request.params.channelId),
       tiktokUsername: body.tiktokUsername,
       displayName: body.displayName,

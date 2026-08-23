@@ -3,7 +3,7 @@ import { z } from "zod";
 import { asyncHandler } from "../lib/async-handler.js";
 import { mutateOk, ok } from "../lib/response.js";
 import { requireAuth } from "../middlewares/auth.js";
-import { requireShopId } from "../services/account.service.js";
+import { requireUsableAccountContext } from "../services/account.service.js";
 import { getCustomerAnalytics, getCustomerById, getCustomerOverview, listCustomerOrders, listCustomers, updateCustomerProfile } from "../services/customer.service.js";
 
 const router = Router();
@@ -20,7 +20,8 @@ router.use(requireAuth);
 router.get(
   "/",
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
+    const ctx = await requireUsableAccountContext(request);
+    const shopId = ctx.shop.id;
     const limit = request.query.limit ? Math.min(Number(request.query.limit), 200) : 100;
     const offset = request.query.offset ? Number(request.query.offset) : 0;
     const customers = await listCustomers(shopId, limit, offset);
@@ -31,8 +32,8 @@ router.get(
 router.get(
   "/overview",
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
-    const overview = await getCustomerOverview(shopId);
+    const ctx = await requireUsableAccountContext(request);
+    const overview = await getCustomerOverview(ctx.shop.id);
     return ok(response, overview);
   }),
 );
@@ -40,8 +41,8 @@ router.get(
 router.get(
   "/:customerId/analytics",
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
-    const analytics = await getCustomerAnalytics(shopId, String(request.params.customerId));
+    const ctx = await requireUsableAccountContext(request);
+    const analytics = await getCustomerAnalytics(ctx.shop.id, String(request.params.customerId));
     return ok(response, { analytics });
   }),
 );
@@ -49,7 +50,8 @@ router.get(
 router.get(
   "/:customerId/orders",
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
+    const ctx = await requireUsableAccountContext(request);
+    const shopId = ctx.shop.id;
     const limit = request.query.limit ? Math.min(Number(request.query.limit), 200) : 200;
     const offset = request.query.offset ? Number(request.query.offset) : 0;
     const orders = await listCustomerOrders(shopId, String(request.params.customerId), limit, offset);
@@ -60,7 +62,8 @@ router.get(
 router.get(
   "/:customerId",
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
+    const ctx = await requireUsableAccountContext(request);
+    const shopId = ctx.shop.id;
     const customer = await getCustomerById({
       shopId,
       customerId: String(request.params.customerId),
@@ -72,7 +75,8 @@ router.get(
 router.patch(
   "/:customerId",
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
+    const ctx = await requireUsableAccountContext(request);
+    const shopId = ctx.shop.id;
     const body = updateCustomerSchema.parse(request.body || {});
     const customer = await updateCustomerProfile({
       shopId,

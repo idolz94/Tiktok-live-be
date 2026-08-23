@@ -3,7 +3,7 @@ import { z } from "zod";
 import { asyncHandler } from "../lib/async-handler.js";
 import { ok, mutateOk, mutateCreated } from "../lib/response.js";
 import { requireAuth } from "../middlewares/auth.js";
-import { requireShopId } from "../services/account.service.js";
+import { requireUsableAccountContext } from "../services/account.service.js";
 import {
   listCustomerAddresses,
   createCustomerAddress,
@@ -29,7 +29,8 @@ router.use(requireAuth);
 router.get(
   "/",
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
+    const ctx = await requireUsableAccountContext(request);
+    const shopId = ctx.shop.id;
     const addresses = await listCustomerAddresses(shopId, String(request.params.customerId));
     return ok(response, { addresses });
   }),
@@ -38,7 +39,8 @@ router.get(
 router.post(
   "/",
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
+    const ctx = await requireUsableAccountContext(request);
+    const shopId = ctx.shop.id;
     const body = addressBodySchema.parse(request.body || {});
     const address = await createCustomerAddress(shopId, String(request.params.customerId), body);
     return mutateCreated(response, "Thêm địa chỉ thành công.", { address });
@@ -48,7 +50,8 @@ router.post(
 router.patch(
   "/:addressId",
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
+    const ctx = await requireUsableAccountContext(request);
+    const shopId = ctx.shop.id;
     const body = addressBodySchema.parse(request.body || {});
     const address = await updateCustomerAddress(
       shopId,
@@ -63,7 +66,8 @@ router.patch(
 router.delete(
   "/:addressId",
   asyncHandler(async (request, response) => {
-    const shopId = await requireShopId(request);
+    const ctx = await requireUsableAccountContext(request);
+    const shopId = ctx.shop.id;
     await deleteCustomerAddress(shopId, String(request.params.customerId), String(request.params.addressId));
     return mutateOk(response, "Đã xoá địa chỉ.");
   }),
