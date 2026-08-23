@@ -79,6 +79,21 @@ export async function updateProductPreset(
   return updated;
 }
 
+// ponytail: exact-code lookup used by explicit overrides (AI/rule confirm sheet) — no fuzzy matching,
+// caller already knows the code (seller picked it from the shop's own catalog).
+export async function getProductPresetByCode(shopId: string, code: string): Promise<ProductPreset | null> {
+  const normalized = code.trim();
+  if (!normalized) return null;
+
+  const [preset] = await db
+    .select()
+    .from(shopProductPresets)
+    .where(and(eq(shopProductPresets.shopId, shopId), eq(shopProductPresets.code, normalized)))
+    .limit(1);
+
+  return preset ?? null;
+}
+
 export async function deleteProductPreset(shopId: string, presetId: string): Promise<void> {
   const existing = await db
     .select({ id: shopProductPresets.id })

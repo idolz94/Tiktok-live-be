@@ -15,9 +15,10 @@ import {
   resolveShopForCollectorEvent,
 } from "./internal-live-ingest.service.js";
 import { endLiveSession } from "./live-sessions.service.js";
-import { upsertBuyingIntentQueueFromComment } from "./buying-intent-queue.service.js";
+import { upsertBuyingIntentQueueFromComment, updateBuyingIntentQueueStatus } from "./buying-intent-queue.service.js";
 import { saveLiveComment } from "./live-comments.service.js";
 import { matchPresetByComment } from "./product-presets.service.js";
+import { createOrderFromComment } from "./orders.service.js";
 import { updateTikTokChannelProfile } from "./tiktok-channels.service.js";
 
 // ─── Room state ───────────────────────────────────────────────────────────────
@@ -39,9 +40,42 @@ type RoomState = {
   lastCommentAt: string | null;
   commentCount: number;
   lastError: string | null;
+  // ponytail: reconnect-with-grace — thay vì end session ngay khi Euler đóng socket,
+  // room vào trạng thái "reconnecting" và retry trong 1 cửa sổ; chỉ hết cửa sổ mới end thật.
+  reconnectAttempts: number;
+  reconnectWindowStartedAt: number | null;
+  // ponytail: cache resolve shop/session — trước đây MỖI comment gọi lại
+  // resolveShopForCollectorEvent + ensureCollectorLiveSession (2+ query/comment); live đông
+  // comment là nghẽn event loop → miss ping → tự rớt. Room sống thì shop/session không đổi.
+  resolvedShopId: string | null;
+  cachedSessionId: string | null;
 };
 
 const rooms = new Map<string, RoomState>();
+
+// ─── Reconnect policy ────────────────────────────────────────────────────────
+// Euler close codes chia 3 nhóm:
+// - live thật sự kết thúc: STREAM_END, NOT_LIVE (sau khi đã từng connect)
+// - lỗi vĩnh viễn (retry vô ích): INVALID_OPTIONS/INVALID_AUTH/NO_PERMISSION
+// - còn lại (kể cả 1006 network blip, TOO_MANY_CONNECTIONS, MAX_LIFETIME 8h...): transient → retry.
+const RECONNECT_GRACE_WINDOW_MS = 5 * 60 * 1000;
+const RECONNECT_DELAYS_MS = [3_000, 6_000, 12_000, 24_000, 48_000, 90_000];
+// TOO_MANY_CONNECTIONS = rate limit phía Euler — retry sớm chỉ làm tệ hơn.
+const RATE_LIMIT_MIN_DELAY_MS = 30_000;
+
+const FATAL_CLOSE_CODES: number[] = [
+  ClientCloseCode.INVALID_OPTIONS,
+  ClientCloseCode.INVALID_AUTH,
+  ClientCloseCode.NO_PERMISSION,
+];
+
+// ─── Auto draft order (hybrid tier) ──────────────────────────────────────────
+// ponytail: điểm RẤT cao (mặc định ≥90) + match được preset + đủ thông tin → tự tạo đơn nháp,
+// seller chỉ review. Điểm 85–89 vẫn đi đường ORDER_RECOMMENDED (seller bấm tay) như cũ.
+// Draft là trạng thái đảo ngược được nên auto ở mức nháp an toàn; tắt bằng LIVE_AUTO_DRAFT_ORDER=false.
+const AUTO_DRAFT_ORDER_ENABLED = (process.env.LIVE_AUTO_DRAFT_ORDER ?? "true") !== "false";
+const AUTO_DRAFT_MIN_SCORE = Number(process.env.LIVE_AUTO_DRAFT_MIN_SCORE ?? 90);
+const RECOMMEND_MIN_SCORE = 85;
 
 function roomKey(username: string, shopId?: string | null, userId?: string | null) {
   return `${shopId || "global"}:${userId || "global"}:${username}`;
@@ -54,6 +88,53 @@ function nowIso() {
 function sendRoomSse(room: RoomState, shopId: string, event: Parameters<typeof broadcastSseToShop>[1], payload: unknown) {
   if (room.userId) return sendSseToUser(room.userId, event, payload);
   return broadcastSseToShop(shopId, event, payload);
+}
+
+// ponytail: shop của room không đổi trong suốt vòng đời — resolve 1 lần, cache lại.
+async function resolveRoomShopId(room: RoomState): Promise<string | null> {
+  if (room.resolvedShopId) return room.resolvedShopId;
+  const shop = await resolveShopForCollectorEvent({
+    shopId: room.shopId,
+    liveUsername: room.username,
+  });
+  if (shop?.id) room.resolvedShopId = shop.id;
+  return shop?.id ?? null;
+}
+
+function emitReconnecting(room: RoomState, info: { attempt: number; code: number; reason: string; nextRetryMs: number }) {
+  resolveRoomShopId(room)
+    .then((shopId) => {
+      if (!shopId) return;
+      sendRoomSse(room, shopId, "LIVE_RECONNECTING", {
+        shopId,
+        liveSessionId: room.cachedSessionId,
+        live_session_id: room.cachedSessionId,
+        collectorSessionId: room.collectorSessionId,
+        liveUsername: room.username,
+        attempt: info.attempt,
+        closeCode: info.code,
+        reason: info.reason,
+        nextRetryMs: info.nextRetryMs,
+        createdAt: nowIso(),
+      });
+    })
+    .catch(() => {});
+}
+
+function emitReconnected(room: RoomState) {
+  resolveRoomShopId(room)
+    .then((shopId) => {
+      if (!shopId) return;
+      sendRoomSse(room, shopId, "LIVE_RECONNECTED", {
+        shopId,
+        liveSessionId: room.cachedSessionId,
+        live_session_id: room.cachedSessionId,
+        collectorSessionId: room.collectorSessionId,
+        liveUsername: room.username,
+        createdAt: nowIso(),
+      });
+    })
+    .catch(() => {});
 }
 
 // ─── Ingest helpers (direct calls — no HTTP) ─────────────────────────────────
@@ -72,26 +153,28 @@ async function ingestComment(room: RoomState, data: any) {
   const externalCommentId = String(data.common?.msgId || data.msgId || data.id || randomUUID());
   const createdAt = nowIso();
 
-  const shop = await resolveShopForCollectorEvent({
-    shopId: room.shopId,
-    liveUsername: room.username,
-  });
+  const shopId = await resolveRoomShopId(room);
+  if (!shopId) return;
 
-  if (!shop?.id) return;
-
-  const session = await ensureCollectorLiveSession({
-    shopId: shop.id,
-    userId: room.userId,
-    liveUsername: room.username,
-    collectorSessionId: room.collectorSessionId,
-    startedAt: createdAt,
-  });
+  // ponytail: ensure session 1 lần cho cả room thay vì mỗi comment — id không đổi khi room còn sống.
+  let sessionId = room.cachedSessionId;
+  if (!sessionId) {
+    const session = await ensureCollectorLiveSession({
+      shopId,
+      userId: room.userId,
+      liveUsername: room.username,
+      collectorSessionId: room.collectorSessionId,
+      startedAt: createdAt,
+    });
+    sessionId = session.id;
+    room.cachedSessionId = sessionId;
+  }
 
   const commentPayload = {
     id: externalCommentId,
     externalCommentId,
-    shopId: shop.id,
-    liveSessionId: session.id,
+    shopId,
+    liveSessionId: sessionId,
     tiktokUsername: uniqueId.replace(/^@/, ""),
     displayName: nickname,
     avatarUrl,
@@ -103,8 +186,8 @@ async function ingestComment(room: RoomState, data: any) {
   };
 
   const comment = await saveLiveComment({
-    shopId: shop.id,
-    liveSessionId: session.id,
+    shopId: shopId,
+    liveSessionId: sessionId,
     comment: commentPayload,
     liveUsername: room.username,
   });
@@ -115,9 +198,9 @@ async function ingestComment(room: RoomState, data: any) {
     eventId: externalCommentId,
     eventType: "COMMENT",
     source: "node-tiktok-collector",
-    shopId: shop.id,
-    liveSessionId: session.id,
-    live_session_id: session.id,
+    shopId: shopId,
+    liveSessionId: sessionId,
+    live_session_id: sessionId,
     collectorSessionId: room.collectorSessionId,
     liveUsername: room.username.replace(/^@/, ""),
     comment: {
@@ -133,29 +216,103 @@ async function ingestComment(room: RoomState, data: any) {
       canCreateDraftOrder: comment.canCreateDraftOrder,
       isPotentialBuyer: comment.isPotentialBuyer,
       matchedReasons: comment.matchedReasons,
+      // ponytail: gửi mã đã match cho Mobile — tạo nhanh (đường A) truyền lại làm override
+      // để đơn tạo ra khớp đúng cái seller nhìn thấy, không để Backend đoán lại lần 2.
+      matchedProductCode: comment.matchedProductCode,
       id: comment.id,
       dbId: comment.id,
     },
     createdAt,
   };
 
-  sendRoomSse(room, shop.id, "COMMENT", realtimePayload);
+  sendRoomSse(room, shopId, "COMMENT", realtimePayload);
 
+  let queueItem: Awaited<ReturnType<typeof upsertBuyingIntentQueueFromComment>> | null = null;
   try {
-    const item = await upsertBuyingIntentQueueFromComment(comment);
-    if (item) sendRoomSse(room, shop.id, "BUYING_INTENT_UPDATED", { item });
+    queueItem = await upsertBuyingIntentQueueFromComment(comment);
+    if (queueItem) sendRoomSse(room, shopId, "BUYING_INTENT_UPDATED", { item: queueItem });
   } catch (e: any) {
     // ponytail: queue is secondary; never drop the live comment because queue upsert failed.
     logger.warn({ err: e?.message, commentId: comment.id }, "[TIKTOK] buying intent queue failed");
   }
 
   const recommendationScore = Number(comment.finalScore ?? comment.confidence ?? 0);
-  if (comment.intent === "buy" && comment.canCreateOrder && comment.matchedProductCode && recommendationScore >= 85) {
-    const matchedPreset = await matchPresetByComment(shop.id, comment.commentText || commentText);
+  const isBuyWithPreset =
+    comment.intent === "buy" && comment.canCreateOrder && Boolean(comment.matchedProductCode);
+
+  // ── Tầng 1 (auto): điểm rất cao → tự tạo đơn nháp, seller chỉ review ──
+  let autoCreated = false;
+  if (
+    AUTO_DRAFT_ORDER_ENABLED &&
+    isBuyWithPreset &&
+    comment.canCreateDraftOrder &&
+    recommendationScore >= AUTO_DRAFT_MIN_SCORE
+  ) {
+    try {
+      const ownerUserId = room.userId || (await findShopOwnerUserId(shopId));
+      if (ownerUserId) {
+        // ponytail: truyền matchedProductCode làm override — dùng đúng preset đã match lúc
+        // phân loại, không fuzzy match lại lần 2. Khách đã có draft trong phiên → tự ghép đơn.
+        const orderResult = await createOrderFromComment({
+          shopId,
+          userId: ownerUserId,
+          comment: { ...commentPayload, id: comment.id, dbId: comment.id },
+          liveSessionId: sessionId,
+          note: "Tạo tự động từ comment live",
+          productCode: comment.matchedProductCode,
+        });
+        autoCreated = true;
+
+        // Khách đã có đơn → queue item chuyển "handled" để tab Cần xử lý không hỏi lại.
+        if (queueItem) {
+          try {
+            const handledItem = await updateBuyingIntentQueueStatus({
+              shopId,
+              itemId: queueItem.id,
+              status: "handled",
+            });
+            sendRoomSse(room, shopId, "BUYING_INTENT_UPDATED", { item: handledItem });
+          } catch (e: any) {
+            logger.warn({ err: e?.message }, "[TIKTOK] auto order: queue handled update failed");
+          }
+        }
+
+        sendRoomSse(room, shopId, "ORDER_AUTO_CREATED", {
+          shopId,
+          liveSessionId: sessionId,
+          commentId: comment.id,
+          externalCommentId,
+          tiktokUsername: comment.tiktokUsername,
+          displayName: comment.displayName,
+          orderId: orderResult.orderId,
+          orderCode: orderResult.orderCode,
+          merged: Boolean(orderResult.merged),
+          confidence: recommendationScore,
+          commentText: comment.commentText,
+          createdAt: nowIso(),
+        });
+        logger.info(
+          { username: room.username, orderCode: orderResult.orderCode, score: recommendationScore },
+          "[TIKTOK] auto-created draft order from comment",
+        );
+      }
+    } catch (e: any) {
+      // ponytail: auto fail (hết quota đơn, preset vừa bị xoá...) → không chặn flow,
+      // rơi xuống ORDER_RECOMMENDED để seller vẫn tạo tay được như cũ.
+      logger.warn(
+        { err: e?.message, commentId: comment.id },
+        "[TIKTOK] auto draft order failed — falling back to recommendation",
+      );
+    }
+  }
+
+  // ── Tầng 2 (gợi ý): 85–89, auto tắt, hoặc auto fail → seller bấm tay như cũ ──
+  if (!autoCreated && isBuyWithPreset && recommendationScore >= RECOMMEND_MIN_SCORE) {
+    const matchedPreset = await matchPresetByComment(shopId, comment.commentText || commentText);
     if (matchedPreset) {
-      sendRoomSse(room, shop.id, "ORDER_RECOMMENDED", {
-        shopId: shop.id,
-        liveSessionId: session.id,
+      sendRoomSse(room, shopId, "ORDER_RECOMMENDED", {
+        shopId: shopId,
+        liveSessionId: sessionId,
         commentId: comment.id,
         tiktokUsername: comment.tiktokUsername,
         displayName: comment.displayName,
@@ -173,8 +330,8 @@ async function ingestComment(room: RoomState, data: any) {
   }
 
   await enqueueLiveEvent("comment-saved", {
-    shopId: shop.id,
-    liveSessionId: session.id,
+    shopId: shopId,
+    liveSessionId: sessionId,
     commentId: comment.id,
     externalCommentId: comment.externalCommentId,
   });
@@ -207,6 +364,8 @@ async function onConnected(room: RoomState, roomId: string | null) {
     collectorSessionId: room.collectorSessionId,
     startedAt: createdAt,
   });
+  room.resolvedShopId = result.shopId;
+  room.cachedSessionId = session.id;
 
   const payload = {
     shopId: result.shopId,
@@ -356,15 +515,11 @@ async function onCollectorStopped(room: RoomState, options?: { silent?: boolean 
 }
 
 async function onViewerCount(room: RoomState, viewersCount: number) {
-  const shop = await resolveShopForCollectorEvent({
-    shopId: room.shopId,
-    liveUsername: room.username,
-  });
+  const shopId = await resolveRoomShopId(room);
+  if (!shopId) return;
 
-  if (!shop?.id) return;
-
-  sendRoomSse(room, shop.id, "VIEWER_COUNT_UPDATE", {
-    shopId: shop.id,
+  sendRoomSse(room, shopId, "VIEWER_COUNT_UPDATE", {
+    shopId,
     liveUsername: room.username,
     viewersCount,
     createdAt: nowIso(),
@@ -378,15 +533,11 @@ async function onUserJoined(room: RoomState, data: any) {
   const joinAvatarUrl: string =
     user.profilePictureUrl || user.avatarUrl || data.profilePictureUrl || "";
 
-  const shop = await resolveShopForCollectorEvent({
-    shopId: room.shopId,
-    liveUsername: room.username,
-  });
+  const shopId = await resolveRoomShopId(room);
+  if (!shopId) return;
 
-  if (!shop?.id) return;
-
-  sendRoomSse(room, shop.id, "USER_JOINED", {
-    shopId: shop.id,
+  sendRoomSse(room, shopId, "USER_JOINED", {
+    shopId,
     liveUsername: room.username,
     nickname: joinDisplayName,
     joinUsername,
@@ -408,7 +559,20 @@ function parseEulerFrame(raw: string): DecodedData[] {
 }
 
 function emitConnectedOnce(room: RoomState, roomId: string | null) {
-  if (room.hasEmittedConnected) return;
+  if (room.hasEmittedConnected) {
+    // ponytail: reconnect thành công giữa chừng — reset cửa sổ retry, báo Mobile
+    // "đã nối lại" thay vì chạy lại onConnected (session vẫn là session cũ).
+    if (room.reconnectWindowStartedAt != null) {
+      room.reconnectWindowStartedAt = null;
+      room.reconnectAttempts = 0;
+      room.roomId = roomId;
+      room.isRunning = true;
+      room.isConnecting = false;
+      logger.info({ username: room.username }, "[TIKTOK] reconnected to live");
+      emitReconnected(room);
+    }
+    return;
+  }
   room.hasEmittedConnected = true;
   room.roomId = roomId;
   room.isRunning = true;
@@ -464,22 +628,60 @@ function handleEulerEvent(room: RoomState, event: DecodedData) {
   }
 }
 
-function shouldReconnect(code: number) {
-  return [
-    ClientCloseCode.NO_MESSAGES_TIMEOUT,
-    ClientCloseCode.TIKTOK_CLOSED_CONNECTION,
-    ClientCloseCode.INTERNAL_SERVER_ERROR,
-    ClientCloseCode.MAX_LIFETIME_EXCEEDED,
-    ClientCloseCode.WEBCAST_FETCH_ERROR, // transient TikTok API timeout — retry
-  ].includes(code);
+// ponytail: hết cửa sổ grace hoặc lỗi vĩnh viễn → end session thật sự.
+function failRoom(room: RoomState, message: string) {
+  const key = roomKey(room.username, room.shopId, room.userId);
+  room.isRunning = false;
+  room.isConnecting = false;
+  onError(room, message)
+    .catch((e) => logger.error({ username: room.username, err: e?.message }, "[TIKTOK] onError failed"))
+    .finally(() => rooms.delete(key));
 }
 
-function reconnectRoom(room: RoomState) {
-  if (room.isStopping || !rooms.has(roomKey(room.username, room.shopId, room.userId))) return;
+// ponytail: reconnect-with-grace — retry với backoff + jitter trong RECONNECT_GRACE_WINDOW_MS.
+// Mọi lần connect thất bại đều quay lại đây (kể cả connectRoom throw), không còn "bắn 1 phát rồi bỏ".
+function scheduleReconnect(room: RoomState, code: number, reason: string) {
+  const key = roomKey(room.username, room.shopId, room.userId);
+  if (room.isStopping || !rooms.has(key)) return;
+
+  const now = Date.now();
+  if (room.reconnectWindowStartedAt == null) {
+    room.reconnectWindowStartedAt = now;
+    room.reconnectAttempts = 0;
+  }
+
+  if (now - room.reconnectWindowStartedAt >= RECONNECT_GRACE_WINDOW_MS) {
+    logger.warn(
+      { username: room.username, attempts: room.reconnectAttempts, code },
+      "[TIKTOK] reconnect grace window exhausted",
+    );
+    failRoom(room, reason || `Mất kết nối TikTok Live (code ${code}), đã thử nối lại ${room.reconnectAttempts} lần.`);
+    return;
+  }
+
+  room.isConnecting = true;
+  room.isRunning = false;
+
+  const attempt = room.reconnectAttempts;
+  const base = RECONNECT_DELAYS_MS[Math.min(attempt, RECONNECT_DELAYS_MS.length - 1)];
+  const minDelay = code === ClientCloseCode.TOO_MANY_CONNECTIONS ? RATE_LIMIT_MIN_DELAY_MS : 0;
+  const delay = Math.max(base, minDelay) + Math.floor(Math.random() * 1000);
+  room.reconnectAttempts += 1;
+
+  logger.info(
+    { username: room.username, attempt: attempt + 1, delay, code, reason },
+    "[TIKTOK] scheduling reconnect",
+  );
+  emitReconnecting(room, { attempt: attempt + 1, code, reason, nextRetryMs: delay });
+
   room.reconnectTimer = setTimeout(() => {
     room.reconnectTimer = null;
-    connectRoom(room).catch((e) => logger.error({ err: e?.message }, "[TIKTOK] reconnect failed"));
-  }, 3000);
+    if (room.isStopping || !rooms.has(key)) return;
+    connectRoom(room).catch((e) => {
+      logger.error({ username: room.username, err: e?.message }, "[TIKTOK] reconnect attempt failed");
+      scheduleReconnect(room, code, e?.message || reason);
+    });
+  }, delay);
 }
 
 async function handleEulerClose(room: RoomState, code: number, reason: string) {
@@ -487,28 +689,45 @@ async function handleEulerClose(room: RoomState, code: number, reason: string) {
   room.connection = null;
 
   if (room.isStopping) return;
-  if (shouldReconnect(code)) {
-    room.isConnecting = true;
-    reconnectRoom(room);
-    return;
-  }
-
-  room.isRunning = false;
-  room.isConnecting = false;
 
   const key = roomKey(room.username, room.shopId, room.userId);
 
+  // Chưa từng connect được + NOT_LIVE → streamer chưa bật live. Trước đây throw ở đây rồi
+  // trông cậy connectRoom(room).catch() bên startTikTokCollector bắt lại để bắn LIVE_ERROR —
+  // nhưng connectRoom() đã resolve ngay sau khi đăng ký listener (không await sự kiện "close"),
+  // nên throw async này chỉ rơi vào catch nội bộ của addEventListener("close", ...) (chỉ log,
+  // không bắn SSE) → Mobile kẹt mãi ở "Đang lấy comment...". Gọi onError() trực tiếp tại đây để
+  // luôn bắn LIVE_ERROR bất kể ai đang lắng nghe promise này.
   if (!room.hasEmittedConnected && code === ClientCloseCode.NOT_LIVE) {
+    room.isRunning = false;
+    room.isConnecting = false;
+    await onError(room, "TikTok chưa bật live. Vui lòng kiểm tra lại phiên live.");
     rooms.delete(key);
-    throw new Error("TikTok chưa bật live");
+    return;
   }
 
-  if (code === ClientCloseCode.NOT_LIVE || code === ClientCloseCode.STREAM_END) {
+  // Live thật sự kết thúc: STREAM_END, hoặc NOT_LIVE khi đã từng connect
+  // (kể cả khi đang trong lượt reconnect — nối lại mà "not live" nghĩa là live đã tắt).
+  if (code === ClientCloseCode.STREAM_END || code === ClientCloseCode.NOT_LIVE) {
+    room.isRunning = false;
+    room.isConnecting = false;
     await onDisconnected(room);
-  } else {
-    await onError(room, reason || `Euler closed with code ${code}`);
+    rooms.delete(key);
+    return;
   }
-  rooms.delete(key);
+
+  // Lỗi vĩnh viễn (sai key/quyền) — retry vô ích, end ngay.
+  if (FATAL_CLOSE_CODES.includes(code)) {
+    room.isRunning = false;
+    room.isConnecting = false;
+    await onError(room, reason || `Euler closed with code ${code}`);
+    rooms.delete(key);
+    return;
+  }
+
+  // ponytail: mọi mã còn lại — network blip (1006), timeout, rate limit, hết 8h lifetime,
+  // lỗi server Euler... — đều là transient: giữ session sống, retry trong grace window.
+  scheduleReconnect(room, code, reason);
 }
 
 async function connectRoom(room: RoomState) {
@@ -592,6 +811,10 @@ export async function startTikTokCollector({
     lastCommentAt: null,
     commentCount: 0,
     lastError: null,
+    reconnectAttempts: 0,
+    reconnectWindowStartedAt: null,
+    resolvedShopId: null,
+    cachedSessionId: null,
   };
 
   rooms.set(key, room);
@@ -695,6 +918,8 @@ export function listTikTokCollectors() {
     roomId: r.roomId,
     isRunning: r.isRunning,
     isStopping: r.isStopping,
+    reconnectAttempts: r.reconnectAttempts,
+    isReconnecting: r.reconnectWindowStartedAt != null,
     commentCount: r.commentCount,
     startedAt: r.startedAt,
     lastCommentAt: r.lastCommentAt,

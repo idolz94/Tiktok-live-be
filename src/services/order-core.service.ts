@@ -8,7 +8,7 @@ import { getCommentTikTokUsername } from "../utils/tiktok.js";
 import { findOrCreateCustomer, listCustomerOrders, updateCustomerAfterOrder, decrementCustomerAfterOrderDelete } from "./customer.service.js";
 import { findDbLiveCommentId, updateLiveCommentOrder } from "./live-comments.service.js";
 import { updateLiveSessionOrderCount } from "./live-sessions.service.js";
-import { matchPresetByComment } from "./product-presets.service.js";
+import { matchPresetByComment, getProductPresetByCode } from "./product-presets.service.js";
 import { getCurrentLicense } from "./license.service.js";
 import logger from "../lib/logger.js";
 
@@ -396,6 +396,9 @@ export async function createOrderFromComment({
   customerAddressId,
   quantity,
   note = "",
+  productCode,
+  color,
+  size,
 }: {
   shopId: string;
   userId: string;
@@ -404,6 +407,11 @@ export async function createOrderFromComment({
   customerAddressId?: string | null;
   quantity?: number;
   note?: string;
+  // ponytail: explicit override từ sheet xác nhận (rule/AI) — seller đã chọn lại trong catalog thật.
+  // Có productCode → dùng preset đó thẳng, KHÔNG tự suy luận lại từ text để tránh lệch với cái seller vừa xác nhận.
+  productCode?: string | null;
+  color?: string | null;
+  size?: string | null;
 }) {
   await assertOrderLimitNotExceeded(shopId);
 
@@ -414,7 +422,17 @@ export async function createOrderFromComment({
 
   if (!commentText) throw badRequest("Comment không có nội dung để tạo đơn.");
 
-  const preset = await matchPresetByComment(shopId, commentText);
+  const normalizedProductCode = productCode?.trim();
+  let preset = normalizedProductCode
+    ? await getProductPresetByCode(shopId, normalizedProductCode)
+    : await matchPresetByComment(shopId, commentText);
+  // ponytail: seller đã chọn 1 mã cụ thể trong sheet — mã không có thật trong catalog là lỗi, không âm thầm
+  // rơi về matchPresetByComment (dễ tạo đơn với sản phẩm khác cái seller vừa xác nhận).
+  if (normalizedProductCode && !preset) throw badRequest("Sản phẩm không hợp lệ, vui lòng chọn lại.");
+
+  const overrideColor = color?.trim();
+  const overrideSize = size?.trim();
+
   // ponytail: no preset match → price from comment (parser, else first number ×1000, else 20000)
   const safePrice = preset ? preset.price : resolveFallbackCommentPrice(commentText);
   const rawQuantity = Number(quantity);
@@ -448,8 +466,10 @@ export async function createOrderFromComment({
     if (existingComment?.isOrderCreated) throw badRequest("Comment này đã được tạo đơn.");
   }
 
-  // ponytail: ghep don — customer da co don draft trong cung live session thi ghep item vao don do, khong tao don moi
-  if (liveSessionId && customer?.id) {
+  // ponytail: ghép đơn — khách còn BẤT KỲ đơn draft nào trong shop (không phân biệt phiên live)
+  // thì ghép item vào đơn draft mới nhất thay vì tạo đơn mới. Mục đích: gom về 1 đơn để
+  // khách chỉ trả 1 lần ship, kể cả khi mua rải rác qua nhiều phiên live.
+  if (customer?.id) {
     const [existingDraft] = await db
       .select({ id: orders.id, orderCode: orders.orderCode })
       .from(orders)
@@ -457,7 +477,6 @@ export async function createOrderFromComment({
         and(
           eq(orders.shopId, shopId),
           eq(orders.customerId, customer.id),
-          eq(orders.liveSessionId, liveSessionId),
           eq(orders.status, "draft"),
         ),
       )
@@ -471,8 +490,8 @@ export async function createOrderFromComment({
         productCode: preset?.code ?? "",
         productName: preset?.name || preset?.code || commentText,
         variantName: "",
-        color: preset?.color ?? "",
-        size: "",
+        color: overrideColor ?? preset?.color ?? "",
+        size: overrideSize ?? "",
         quantity: normalizedQuantity,
         price: safePrice,
         rawCommentText: commentText,
@@ -511,7 +530,7 @@ export async function createOrderFromComment({
       customerAvatarUrl: avatarUrl ?? null,
       customerAddressId: normalizedCustomerAddressId ?? defaultAddress?.id ?? null,
       commentText,
-      color: preset?.color ?? null,
+      color: overrideColor ?? preset?.color ?? null,
       status: "draft",
       depositStatus: "unpaid",
       paymentStatus: "unpaid",
@@ -528,8 +547,8 @@ export async function createOrderFromComment({
     productCode: preset?.code ?? "",
     productName: preset?.name || preset?.code || commentText,
     variantName: "",
-    color: preset?.color ?? "",
-    size: "",
+    color: overrideColor ?? preset?.color ?? "",
+    size: overrideSize ?? "",
     quantity: normalizedQuantity,
     price: safePrice,
     rawCommentText: commentText,

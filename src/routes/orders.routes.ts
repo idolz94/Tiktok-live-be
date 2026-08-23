@@ -39,6 +39,11 @@ const createFromCommentSchema = z.object({
   price: z.number().int().nonnegative().optional(),
   quantity: z.number().int().min(1).max(9999).optional(),
   note: z.string().optional().default(""),
+  // ponytail: explicit override từ sheet xác nhận (rule/AI gợi ý, seller đã chọn lại) —
+  // khi có, backend dùng thẳng, KHÔNG gọi lại matchPresetByComment trên text thô.
+  productCode: z.string().trim().min(1).optional(),
+  color: z.string().trim().optional(),
+  size: z.string().trim().optional(),
 });
 
 const depositSchema = z.object({
@@ -233,6 +238,9 @@ router.post(
       customerAddressId: body.customerAddressId,
       quantity: body.quantity,
       note: body.note,
+      productCode: body.productCode,
+      color: body.color,
+      size: body.size,
     });
 
     return mutateCreated(response, "Tạo đơn thành công.", result);
