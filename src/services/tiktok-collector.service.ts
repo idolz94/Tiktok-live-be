@@ -428,7 +428,7 @@ async function onDisconnected(room: RoomState) {
   }
 }
 
-async function onError(room: RoomState, message: string) {
+async function onError(room: RoomState, message: string, reason: string = "collector_error") {
   const createdAt = nowIso();
   const result = await ingestLiveEvent(room, "LIVE_ERROR");
   if (!result) return;
@@ -444,7 +444,7 @@ async function onError(room: RoomState, message: string) {
       username: room.username,
       endedAt: createdAt,
       commentCount: room.commentCount,
-      reason: "collector_error",
+      reason,
     });
   }
 
@@ -455,7 +455,7 @@ async function onError(room: RoomState, message: string) {
     collectorSessionId: room.collectorSessionId,
     liveUsername: room.username,
     message,
-    reason: "collector_error",
+    reason,
     shouldStop: true,
     retry: false,
     createdAt,
@@ -701,7 +701,7 @@ async function handleEulerClose(room: RoomState, code: number, reason: string) {
   if (!room.hasEmittedConnected && code === ClientCloseCode.NOT_LIVE) {
     room.isRunning = false;
     room.isConnecting = false;
-    await onError(room, "TikTok chưa bật live. Vui lòng kiểm tra lại phiên live.");
+    await onError(room, "TikTok chưa bật live. Vui lòng kiểm tra lại phiên live.", "not_live");
     rooms.delete(key);
     return;
   }
