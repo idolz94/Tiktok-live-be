@@ -1,4 +1,4 @@
-import { decodeTikTokEmoji } from "./tiktokEmoji.js";
+import { decodeTikTokEmoji } from "../../utils/tiktokEmoji.js";
 
 export function removeVietnameseAccents(input: string) {
   return String(input || "")

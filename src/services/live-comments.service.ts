@@ -3,9 +3,8 @@ import { db } from "../lib/db.js";
 import { liveComments } from "../db/schema/index.js";
 import { getCommentAvatar, getCommentDisplayName, getCommentText, hasNumber } from "../utils/comment.js";
 import { getCommentTikTokUsername, normalizeAtUsername } from "../utils/tiktok.js";
-import { matchPresetByComment } from "./product-presets.service.js";
 import { updateLiveSessionCommentCount } from "./live-sessions.service.js";
-import { runCommentPipeline } from "../utils/comment-pipeline.js";
+import { scoreCommentForShop } from "./comment-scoring/index.js";
 import logger from "../lib/logger.js";
 
 export async function saveLiveComment({
@@ -28,14 +27,10 @@ export async function saveLiveComment({
   if (!externalCommentId) return null;
 
   const tiktokUsername = normalizeAtUsername(getCommentTikTokUsername(comment));
-  const matchedPreset = await matchPresetByComment(shopId, commentText);
   const normalizedLiveUser = liveUsername ? normalizeAtUsername(liveUsername) : "";
   const isHost = Boolean(normalizedLiveUser && tiktokUsername === normalizedLiveUser);
 
-  const pipeline = runCommentPipeline(commentText, {
-    isHost,
-    matchedPresetCode: matchedPreset?.code ?? null,
-  });
+  const pipeline = await scoreCommentForShop(shopId, commentText, { isHost });
 
   // ponytail: dot1 gate — NEED_LLM only logged, no LLM call yet
   if (pipeline.verdict === "NEED_LLM") {
@@ -46,8 +41,6 @@ export async function saveLiveComment({
   }
   // ponytail: metric hook — count per verdict: pipeline_verdict_total{verdict}
   logger.debug({ verdict: pipeline.verdict, intent: pipeline.intent }, "[PIPELINE] verdict");
-
-  const intentResult = pipeline.result;
 
   const payload = {
     shopId,
@@ -61,21 +54,21 @@ export async function saveLiveComment({
     commentText,
     text: commentText,
     rawText: String(comment?.rawText || comment?.raw_text || commentText).trim(),
-    intent: intentResult.intent,
-    priorityLevel: intentResult.priorityLevel,
-    finalScore: intentResult.finalScore,
+    intent: pipeline.intent,
+    priorityLevel: pipeline.priorityLevel,
+    finalScore: pipeline.finalScore,
     hasNumber: hasNumber(commentText),
-    canCreateOrder: intentResult.canCreateOrder,
-    canSuggestOrder: intentResult.canSuggestOrder,
-    canCreateDraftOrder: intentResult.canCreateDraftOrder,
-    isPotentialBuyer: intentResult.isPotentialBuyer,
-    isQuestion: intentResult.isQuestion,
-    matchedReasons: intentResult.matchedReasons,
+    canCreateOrder: pipeline.canCreateOrder,
+    canSuggestOrder: pipeline.canSuggestOrder,
+    canCreateDraftOrder: pipeline.canCreateDraftOrder,
+    isPotentialBuyer: pipeline.isPotentialBuyer,
+    isQuestion: pipeline.isQuestion,
+    matchedReasons: pipeline.matchedReasons,
     ruleVersion: "comment-rules-v1",
-    matchedProductCode: matchedPreset?.code ?? null,
-    topic: intentResult.topic ?? null,
-    confidence: intentResult.confidence ?? null,
-    productReference: intentResult.productReference ?? null,
+    matchedProductCode: pipeline.matchedPresetCode,
+    topic: pipeline.topic,
+    confidence: pipeline.confidence,
+    productReference: pipeline.productReference,
     isOrderCreated: Boolean(comment?.isOrderCreated || comment?.is_order_created),
     orderId: comment?.orderId || comment?.order_id || null,
     updatedAt: new Date(),

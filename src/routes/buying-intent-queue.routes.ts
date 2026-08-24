@@ -9,7 +9,7 @@ import {
   listBuyingIntentQueue,
   updateBuyingIntentQueueStatus,
 } from "../services/buying-intent-queue.service.js";
-import { analyzeLiveCommentIntent } from "../utils/comment-intent.js";
+import { analyzeLiveCommentIntent } from "../services/comment-scoring/index.js";
 
 const router = Router();
 

@@ -22,17 +22,48 @@ export function matchKeywords(text: string, keywords: string[]) {
   return keywords.filter((keyword) => hasKeyword(text, keyword));
 }
 
+// ponytail: \b bắt buộc cả trước lẫn sau từ khoá — không có \b sau thì "ma" khớp nhầm vào
+// giữa 1 từ thường bất kỳ có "ma" đứng đầu (vd "mặc" → "mac" khớp "ma" + capture nhầm "c" làm
+// mã sản phẩm). Có \b sau đảm bảo từ khoá phải đứng riêng biệt (theo sau là khoảng trắng/kết
+// thúc chuỗi/dấu câu), không phải tiền tố của từ khác.
 const PRODUCT_REFERENCE_PATTERNS = [
-  /(?:sp|mã|ma|mã sản phẩm|ma san pham|product)\s*#?\s*([a-z0-9]+)/i,
-  /(?:vị trí|vi tri|mục|muc|hàng|hang)\s*#?\s*(\d+)/i,
-  /\b(stt|số thứ tự|so thu tu)\s*#?\s*(\d+)/i,
+  /\b(?:sp|mã|ma|mã sản phẩm|ma san pham|product)\b\s*#?\s*([a-z0-9]+)/i,
+  // ponytail: "mẫu" (mẫu sản phẩm) và "màu" (color) đều mất dấu thành "mau" — không phân biệt
+  // được bằng chữ. Nhưng "mẫu <số>" gần như luôn nghĩa "mẫu số mấy" (hỏi sản phẩm), còn màu thì
+  // không ai gọi bằng số ("màu 3" không phải cách nói màu sắc) — nên "mau" + số ngay sau coi là
+  // an toàn để hiểu là mẫu sản phẩm, không phải màu.
+  /\bmau\s*#?\s*(\d{1,4})\b/i,
+  /\b(?:vị trí|vi tri|mục|muc|hàng|hang)\b\s*#?\s*(\d+)/i,
+  /\b(stt|số thứ tự|so thu tu)\b\s*#?\s*(\d+)/i,
   /\b([a-z])\s*[-–]\s*(\d{1,3})\b/i,
 ];
 
+// ponytail: các từ hay đứng ngay sau "mã/sp" trong câu nói chuyện bình thường nhưng không
+// phải mã sản phẩm thật (vd "mã này" → "này" chỉ là "cái này", "mã gì vậy" → "gì" là hỏi).
+// Text truyền vào đây đã qua normalizeComment (bỏ dấu, thường hoá) nên so sánh ở dạng không dấu.
+// Liệt kê 1 lần cho đầy đủ theo nhóm (thay vì vá dần theo từng bug gặp phải) — vẫn là blocklist
+// nên có thể sót từ hiếm, nhưng phủ được phần lớn cách nói thực tế của khách trong live.
+const NON_CODE_WORDS = new Set([
+  // đại từ chỉ định
+  "nay", "do", "kia", "day", "ay",
+  // đại từ nghi vấn
+  "gi", "sao", "nao", "dau", "ai", "may",
+  // trợ từ / tiểu từ tình thái hay đứng cuối câu, cũng hay bị bắt nhầm khi đứng ngay sau "mã"
+  "the", "vay", "a", "nhe", "nha", "ha", "nhi", "oi", "di", "luon", "hen", "ne", "z", "v",
+]);
+
 export function extractProductReference(text: string): string | undefined {
   for (const pattern of PRODUCT_REFERENCE_PATTERNS) {
-    const match = text.match(pattern);
-    if (match) return (match[2] || match[1] || "").trim();
+    const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+    const globalPattern = new RegExp(pattern.source, flags);
+    let match: RegExpExecArray | null;
+    // ponytail: match đầu tiên mà rơi vào NON_CODE_WORDS thì bỏ qua, tìm tiếp match kế trong
+    // cùng chuỗi (thay vì chấp nhận luôn hoặc bỏ hẳn pattern) — phòng câu có nhắc mã thật ở chỗ khác.
+    while ((match = globalPattern.exec(text)) !== null) {
+      const captured = (match[2] || match[1] || "").trim();
+      if (captured && !NON_CODE_WORDS.has(captured.toLowerCase())) return captured;
+      if (match.index === globalPattern.lastIndex) globalPattern.lastIndex += 1;
+    }
   }
   return undefined;
 }

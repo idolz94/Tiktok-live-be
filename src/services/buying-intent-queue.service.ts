@@ -3,13 +3,13 @@ import { buyingIntentQueue, liveComments } from "../db/schema/index.js";
 import { badRequest, notFound } from "../lib/api-error.js";
 import { db } from "../lib/db.js";
 import { normalizeAtUsername } from "../utils/tiktok.js";
-import { analyzeLiveCommentIntent } from "../utils/comment-intent.js";
+import { analyzeLiveCommentIntent } from "./comment-scoring/index.js";
 import { getRunningLiveSession } from "./live-sessions.service.js";
 
 type QueueStatus = "pending" | "handled" | "ignored";
 
 // ponytail: already_ordered excluded — customers who already bought aren't active buying opportunities
-const ACTIVE_INTENTS = new Set(["buy", "ask_price", "ask_stock", "ask_shipping", "ask_product", "ask_product_demo", "ask_how_to_buy"]);
+const ACTIVE_INTENTS = new Set(["buy", "ask_price", "ask_stock", "ask_shipping", "ask_product", "ask_product_demo", "ask_how_to_buy", "undecided"]);
 
 function isQueueWorthComment(comment: typeof liveComments.$inferSelect) {
   return Boolean(comment.isPotentialBuyer || comment.canSuggestOrder || ACTIVE_INTENTS.has(String(comment.intent || "")));

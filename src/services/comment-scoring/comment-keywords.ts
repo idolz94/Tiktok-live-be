@@ -241,4 +241,36 @@ export const topicKeywords: Record<string, string[]> = {
   delivery_time: ["mấy ngày", "may ngay", "bao lâu", "bao lau", "khi nào nhận", "khi nao nhan", "hỏa tốc", "hoa toc", "trong ngày", "trong ngay"],
 };
 
-export const potentialBuyerIntents = ["buy", "ask_price", "ask_stock", "ask_shipping", "ask_product", "ask_product_demo", "ask_how_to_buy"] as const;
+// ponytail: "phân vân" — khách đang so sánh/lưỡng lự giữa các lựa chọn (màu/size/mẫu...).
+// Đây là tín hiệu mua hàng MẠNH (khách đã quan tâm, chỉ còn thiếu 1 cú đẩy tư vấn) nên cần
+// tách riêng khỏi "ask_product" (hỏi sản phẩm chung chung) để seller lọc ra chủ động nhắn.
+export const undecidedKeywords = [
+  "phân vân",
+  "phan van",
+  "đắn đo",
+  "dan do",
+  "lưỡng lự",
+  "luong lu",
+  "không biết chọn",
+  "khong biet chon",
+  "chưa biết chọn",
+  "chua biet chon",
+  "không biết nên",
+  "khong biet nen",
+  "chưa biết nên",
+  "chua biet nen",
+  "chọn cái nào",
+  "chon cai nao",
+  "chọn màu nào",
+  "chon mau nao",
+  "hay là",
+  "hay la",
+  "khó chọn quá",
+  "kho chon qua",
+  "chưa chọn được",
+  "chua chon duoc",
+  "không chọn được",
+  "khong chon duoc",
+];
+
+export const potentialBuyerIntents = ["buy", "ask_price", "ask_stock", "ask_shipping", "ask_product", "ask_product_demo", "ask_how_to_buy", "undecided"] as const;

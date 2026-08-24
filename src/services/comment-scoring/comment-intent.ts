@@ -7,6 +7,9 @@ export type CommentIntent =
   | "ask_product"
   | "ask_product_demo"
   | "ask_how_to_buy"
+  // ponytail: khách đang lưỡng lự/so sánh giữa 2+ lựa chọn (vd "phân vân màu xanh với nâu") —
+  // tín hiệu mua mạnh, tách riêng khỏi ask_product để seller lọc ra chủ động tư vấn chốt đơn.
+  | "undecided"
   | "normal"
   | "spam"
   | "user";
@@ -54,6 +57,7 @@ import {
   shippingKeywords,
   spamKeywords,
   stockKeywords,
+  undecidedKeywords,
   weakProductKeywords,
 } from "./comment-keywords.js";
 import {
@@ -92,6 +96,7 @@ function withLegacyOrderFlag(result: CommentRuleResult): CommentIntentResult {
 }
 
 export function buildSuggestedReply(intent: CommentIntent, missingFields: string[]): string {
+  if (intent === "undecided") return "Dạ shop tư vấn thêm giúp mình chọn nhé ạ!";
   if (intent !== "buy" || missingFields.length === 0) return "";
   const labels: Record<string, string> = { product: "mã sản phẩm", color: "màu", size: "size", quantity: "số lượng" };
   const parts = missingFields.map((f) => labels[f] || f).filter(Boolean);
@@ -121,9 +126,12 @@ export function analyzeLiveCommentIntent(commentText: string, opts?: { shopBoost
     });
   }
 
-  const question = isQuestion(text);
   const productReference = extractProductReference(text);
   const textWordCount = text.split(/\s+/).filter(Boolean).length;
+  // ponytail: tính sớm để gộp vào "question" — câu "phân vân..." không có dấu "?" nhưng về bản
+  // chất là đang cần seller trả lời/tư vấn, nên coi như 1 dạng câu hỏi.
+  const undecidedMatches = matchKeywords(text, undecidedKeywords);
+  const question = isQuestion(text) || undecidedMatches.length > 0;
 
   const spamMatches = matchKeywords(text, spamKeywords);
   if (spamMatches.length > 0) {
@@ -153,6 +161,10 @@ export function analyzeLiveCommentIntent(commentText: string, opts?: { shopBoost
   const productMatches = matchKeywords(text, productKeywords);
   const weakProductMatches = matchKeywords(text, weakProductKeywords);
   const howToBuyMatches = matchKeywords(text, howToBuyKeywords);
+  // ponytail: "mẫu" trùng "màu" sau khi bỏ dấu — nhưng "mẫu <số>" (hỏi mẫu sản phẩm, vd
+  // "mẫu 3") mang nghĩa hoàn toàn khác "màu đen" (hỏi màu sắc). weakProductKeywords chỉ bắt
+  // được "mau" như tín hiệu màu yếu, nên bù thêm 1 tín hiệu riêng cho case "mau" + số.
+  const hasModelNumberRef = /\bmau\s*#?\s*\d{1,4}\b/.test(text);
   const matchedReasons: string[] = [];
 
   for (const item of buyMatches) matchedReasons.push(`Có ý định mua: ${item}`);
@@ -163,6 +175,8 @@ export function analyzeLiveCommentIntent(commentText: string, opts?: { shopBoost
   for (const item of shippingMatches) matchedReasons.push(`Hỏi vận chuyển: ${item}`);
   for (const item of productMatches) matchedReasons.push(`Hỏi sản phẩm: ${item}`);
   for (const item of weakProductMatches) matchedReasons.push(`Tín hiệu sản phẩm yếu: ${item}`);
+  if (hasModelNumberRef) matchedReasons.push("Hỏi sản phẩm: mẫu (số)");
+  for (const item of undecidedMatches) matchedReasons.push(`Đang phân vân: ${item}`);
   for (const item of howToBuyMatches) matchedReasons.push(`Hỏi cách mua: ${item}`);
 
   let intent: CommentIntent = "normal";
@@ -180,6 +194,9 @@ export function analyzeLiveCommentIntent(commentText: string, opts?: { shopBoost
   } else if (howToBuyMatches.length > 0) {
     intent = "ask_how_to_buy";
     baseScore = 85;
+  } else if (undecidedMatches.length > 0) {
+    intent = "undecided";
+    baseScore = 75;
   } else if (priceMatches.length > 0) {
     intent = "ask_price";
     baseScore = 75;
@@ -189,7 +206,7 @@ export function analyzeLiveCommentIntent(commentText: string, opts?: { shopBoost
   } else if (shippingMatches.length > 0) {
     intent = "ask_shipping";
     baseScore = 65;
-  } else if (productMatches.length > 0) {
+  } else if (productMatches.length > 0 || hasModelNumberRef) {
     intent = "ask_product";
     baseScore = 60;
   } else if (weakProductMatches.length > 0) {

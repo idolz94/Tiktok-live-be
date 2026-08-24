@@ -18,9 +18,6 @@ export type PipelineResult =
   | { verdict: "NEED_LLM"; intent: string; result: CommentIntentResult; hints: EntityHints; rawText: string; missingFields: string[] };
 
 const MIN_TEXT_LENGTH = 2;
-const HIGH_CONFIDENCE_THRESHOLD = 0.85;
-const BUY_SCORE_THRESHOLD = 85;
-const LOW_CONFIDENCE_THRESHOLD = 0.6;
 const CASUAL_CHAT_SCORE = 25;
 
 // ── [1] FILTER: system/seller/noise patterns that never need LLM
@@ -47,17 +44,13 @@ function isNoiseOnly(text: string): boolean {
   return NOISE_ONLY_PATTERNS.some((p) => p.test(text.trim()));
 }
 
-// ── [3] RULE ENGINE — precision-first: only RULE_RESOLVED when truly certain
-
-function hasStrictBuySignal(clean: string, result: CommentIntentResult): boolean {
-  // ponytail: negation guard — "không lấy S03 đen đâu" must never be BUY
-  if (hasNegation(clean)) return false;
-  if (result.intent !== "buy") return false;
-  if (!result.productReference) return false;
-  if (result.finalScore < BUY_SCORE_THRESHOLD) return false;
-  if (result.confidence < HIGH_CONFIDENCE_THRESHOLD) return false;
-  return true;
-}
+// ── [3] RULE ENGINE — đơn giản hoá theo yêu cầu: chỉ còn 1 ngưỡng điểm quyết định
+// SKIP hay RULE_RESOLVED (bỏ các check tinh vi productReference/confidence từng dùng để rơi
+// xuống NEED_LLM khi chưa chắc "mua sản phẩm nào"). Đánh đổi: ưu tiên đơn giản/nhanh hơn là
+// độ chính xác — vd "chốt mã này" (chưa rõ mã nào) giờ sẽ RULE_RESOLVED thay vì NEED_LLM.
+// Lưu ý: verdict ở đây KHÔNG phải cổng an toàn cuối cùng cho việc tự tạo đơn — tiktok-collector
+// vẫn tự yêu cầu matchedProductCode khớp thật với catalog của shop (qua matchPresetByComment)
+// trước khi thật sự tạo đơn, nên "này"/"kia" không tự nhiên khớp ra 1 sản phẩm thật.
 
 function decideRouting(
   clean: string,
@@ -65,61 +58,20 @@ function decideRouting(
   hints: EntityHints,
   ctx: PipelineContext,
 ): PipelineResult | null {
-  // casual chat → SKIP (no LLM cost)
-  if (result.intent === "normal" && result.finalScore < CASUAL_CHAT_SCORE) {
-    return { verdict: "SKIP", reason: "casual_chat", intent: "normal", result, hints, rawText: clean };
-  }
-  // ponytail: colloquial question (ko/hk/hong, "mấy giờ?") rescued to LLM, not dropped
-  if (result.isQuestion && result.intent === "normal") {
-    return { verdict: "NEED_LLM", intent: "ask_product", result, hints, rawText: clean, missingFields: [] };
+  void ctx; // preset-match override đã xử lý trước khi gọi tới đây, ctx giữ lại cho signature ổn định
+
+  if (result.finalScore < CASUAL_CHAT_SCORE) {
+    return { verdict: "SKIP", reason: "low_score", intent: result.intent, result, hints, rawText: clean };
   }
 
-  // buy with strict signal → RULE_RESOLVED (precision > coverage)
-  if (hasStrictBuySignal(clean, result)) {
-    return { verdict: "RULE_RESOLVED", intent: "buy", result, hints, rawText: clean };
-  }
-
-  // preset matched by shop catalog → RULE_RESOLVED (shop knows this code)
-  // ponytail: only if no negation — "không lấy S03" with preset S03 must not resolve
-  if (ctx.matchedPresetCode && result.intent !== "user" && !hasNegation(clean)) {
-    return { verdict: "RULE_RESOLVED", intent: "buy", result, hints, rawText: clean };
-  }
-
-  // buy but missing product or fields → NEED_LLM (don't guess)
-  if (result.intent === "buy") {
-    return { verdict: "NEED_LLM", intent: "buy", result, hints, rawText: clean, missingFields: result.missingFields || ["product"] };
-  }
-
-  // negation on any buy-like text → NEED_LLM (let LLM disambiguate, never SKIP)
+  // ponytail: giữ lại guard phủ định dù đã bỏ các check tinh vi khác — "không lấy S03 đâu" mà
+  // vẫn RULE_RESOLVED thành buy là sai nghiêm trọng (có thể tự tạo đơn cho thứ khách từ chối).
+  // Đây là an toàn tối thiểu, không phải độ chính xác, nên không bỏ theo yêu cầu đơn giản hoá.
   if (hasNegation(clean) && result.matchedReasons.some((r) => r.includes("mua") || r.includes("lấy") || r.includes("chốt"))) {
-    return { verdict: "NEED_LLM", intent: result.intent, result, hints, rawText: clean, missingFields: [] };
+    return { verdict: "SKIP", reason: "negated", intent: result.intent, result, hints, rawText: clean };
   }
 
-  // low-confidence questions → NEED_LLM
-  if (
-    (result.intent === "ask_price" ||
-      result.intent === "ask_stock" ||
-      result.intent === "ask_shipping" ||
-      result.intent === "ask_product") &&
-    result.confidence < LOW_CONFIDENCE_THRESHOLD
-  ) {
-    return { verdict: "NEED_LLM", intent: result.intent, result, hints, rawText: clean, missingFields: result.missingFields || [] };
-  }
-
-  // confident non-buy intents → RULE_RESOLVED
-  if (
-    result.intent === "ask_price" ||
-    result.intent === "ask_stock" ||
-    result.intent === "ask_shipping" ||
-    result.intent === "ask_product" ||
-    result.intent === "ask_product_demo" ||
-    result.intent === "ask_how_to_buy" ||
-    result.intent === "already_ordered"
-  ) {
-    return { verdict: "RULE_RESOLVED", intent: result.intent, result, hints, rawText: clean };
-  }
-
-  return null;
+  return { verdict: "RULE_RESOLVED", intent: result.intent, result, hints, rawText: clean };
 }
 
 export function runCommentPipeline(rawText: string, ctx: PipelineContext): PipelineResult {

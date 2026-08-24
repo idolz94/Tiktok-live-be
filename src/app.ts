@@ -23,6 +23,7 @@ import shopSettingsRoutes from "./routes/shop-settings.routes.js";
 import productPresetsRoutes from "./routes/product-presets.routes.js";
 import webhookSpxRoutes from "./routes/webhook-spx.routes.js";
 import internalLiveRoutes from "./routes/internal-live.routes.js";
+import internalCommentScoringRoutes from "./routes/internal-comment-scoring.routes.js";
 import adminRoutes from "./routes/admin.routes.js";
 import shipmentsRoutes from "./routes/shipments.routes.js";
 
@@ -96,6 +97,7 @@ export function createApp() {
   app.use("/api/me/product-presets", productPresetsRoutes);
   app.use("/api/admin", adminRoutes);
   app.use("/api/internal", internalLiveRoutes);
+  app.use("/api/internal/comment-scoring", internalCommentScoringRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

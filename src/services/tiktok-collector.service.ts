@@ -18,6 +18,7 @@ import { endLiveSession } from "./live-sessions.service.js";
 import { upsertBuyingIntentQueueFromComment, updateBuyingIntentQueueStatus } from "./buying-intent-queue.service.js";
 import { saveLiveComment } from "./live-comments.service.js";
 import { matchPresetByComment } from "./product-presets.service.js";
+import { AUTO_DRAFT_MIN_SCORE, RECOMMEND_MIN_SCORE } from "./comment-scoring/index.js";
 import { createOrderFromComment } from "./orders.service.js";
 import { updateTikTokChannelProfile } from "./tiktok-channels.service.js";
 
@@ -74,8 +75,7 @@ const FATAL_CLOSE_CODES: number[] = [
 // seller chỉ review. Điểm 85–89 vẫn đi đường ORDER_RECOMMENDED (seller bấm tay) như cũ.
 // Draft là trạng thái đảo ngược được nên auto ở mức nháp an toàn; tắt bằng LIVE_AUTO_DRAFT_ORDER=false.
 const AUTO_DRAFT_ORDER_ENABLED = (process.env.LIVE_AUTO_DRAFT_ORDER ?? "true") !== "false";
-const AUTO_DRAFT_MIN_SCORE = Number(process.env.LIVE_AUTO_DRAFT_MIN_SCORE ?? 90);
-const RECOMMEND_MIN_SCORE = 85;
+// AUTO_DRAFT_MIN_SCORE / RECOMMEND_MIN_SCORE giờ khai báo tập trung ở comment-scoring/index.ts
 
 function roomKey(username: string, shopId?: string | null, userId?: string | null) {
   return `${shopId || "global"}:${userId || "global"}:${username}`;

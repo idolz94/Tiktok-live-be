@@ -11,7 +11,7 @@ type Sample = { text: string; truth: Truth; preset?: string | null; isHost?: boo
 function loadRealSamples(): Sample[] | null {
   try {
     const here = dirname(fileURLToPath(import.meta.url));
-    const p = resolve(here, "../../data/comments-300.json");
+    const p = resolve(here, "../../../data/comments-300.json");
     if (!existsSync(p)) return null;
     const rows = JSON.parse(readFileSync(p, "utf8")) as Array<{ text: string; intent: string }>;
     const isHostText = (t: string, intent: string) => intent === "user" && /^@\S+\s/.test(t.trim());
