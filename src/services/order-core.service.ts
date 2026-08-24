@@ -8,7 +8,7 @@ import { getCommentTikTokUsername } from "../utils/tiktok.js";
 import { findOrCreateCustomer, listCustomerOrders, updateCustomerAfterOrder, decrementCustomerAfterOrderDelete } from "./customer.service.js";
 import { findDbLiveCommentId, updateLiveCommentOrder } from "./live-comments.service.js";
 import { updateLiveSessionOrderCount } from "./live-sessions.service.js";
-import { matchPresetByComment, getProductPresetByCode } from "./product-presets.service.js";
+import { matchPresetByComment, getProductPresetByCode, getDefaultProductPreset } from "./product-presets.service.js";
 import { getCurrentLicense } from "./license.service.js";
 import logger from "../lib/logger.js";
 
@@ -437,8 +437,14 @@ export async function createOrderFromComment({
   const overrideColor = color?.trim();
   const overrideSize = size?.trim();
 
-  // ponytail: no preset match → price from comment (parser, else first number ×1000, else 20000)
-  const safePrice = preset ? preset.price : resolveFallbackCommentPrice(commentText);
+  // ponytail: không match preset nào → dùng giá của preset ĐẦU TIÊN của shop (sortOrder) làm giá
+  // mặc định — Live bắt buộc setup >= 1 preset trước khi connect nên luôn có ít nhất 1 cái để lấy.
+  // resolveFallbackCommentPrice (đoán số trong text, else 20000) chỉ còn là lưới an toàn cuối cùng
+  // cho trường hợp hiếm: preset bị xoá hết giữa chừng sau khi đã connect live.
+  const defaultPreset = preset ? null : await getDefaultProductPreset(shopId);
+  const safePrice = preset
+    ? preset.price
+    : (defaultPreset?.price ?? resolveFallbackCommentPrice(commentText));
   const rawQuantity = Number(quantity);
   const normalizedQuantity = Number.isFinite(rawQuantity) && rawQuantity > 0
     ? Math.max(1, Math.min(9999, Math.floor(rawQuantity)))

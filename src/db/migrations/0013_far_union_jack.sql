@@ -1,0 +1,2 @@
+ALTER TABLE "live_sessions" ADD COLUMN "pinned_preset_id" uuid;--> statement-breakpoint
+ALTER TABLE "live_sessions" ADD CONSTRAINT "live_sessions_pinned_preset_id_shop_product_presets_id_fk" FOREIGN KEY ("pinned_preset_id") REFERENCES "public"."shop_product_presets"("id") ON DELETE set null ON UPDATE no action;

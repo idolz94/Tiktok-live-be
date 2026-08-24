@@ -23,6 +23,20 @@ export async function listProductPresets(shopId: string): Promise<ProductPreset[
     .orderBy(shopProductPresets.sortOrder, shopProductPresets.createdAt);
 }
 
+// ponytail: dùng làm giá mặc định khi tạo đơn từ comment không match preset nào — Live bắt buộc
+// setup >= 1 preset trước khi connect (xem use-tiktok-page.tsx connectSelectedChannel), nên preset
+// đầu tiên (thứ tự seller tự sắp — sortOrder) là 1 mức giá thật của shop, đáng tin hơn đoán mò
+// số trong text comment. Xem order-core.service.ts createOrderFromComment.
+export async function getDefaultProductPreset(shopId: string): Promise<ProductPreset | null> {
+  const [preset] = await db
+    .select()
+    .from(shopProductPresets)
+    .where(eq(shopProductPresets.shopId, shopId))
+    .orderBy(shopProductPresets.sortOrder, shopProductPresets.createdAt)
+    .limit(1);
+  return preset ?? null;
+}
+
 export async function createProductPreset(
   shopId: string,
   data: { code: string; name?: string | null; color?: string | null; price: number },
