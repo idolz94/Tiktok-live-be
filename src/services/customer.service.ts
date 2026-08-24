@@ -248,6 +248,11 @@ export async function listCustomerOrders(shopId: string, customerId: string, lim
       shippingStatus: orders.shippingStatus,
       totalAmount: orders.totalAmount,
       codAmount: orders.codAmount,
+      // ponytail: cần cho fallback hiển thị tên sản phẩm/giá ở Mobile khi order không match preset
+      // nào (OrderCard/normalizeApiOrderForUi) — cùng bug đã gặp ở listOrdersLight, xem đó để rõ
+      // lý do. Thiếu 2 cột này Mobile hiện literal "Sản phẩm" / giá 0đ.
+      commentText: orders.commentText,
+      subtotalAmount: orders.subtotalAmount,
       createdAt: orders.createdAt,
     })
     .from(orders)
