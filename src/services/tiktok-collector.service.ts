@@ -15,7 +15,6 @@ import {
   resolveShopForCollectorEvent,
 } from "./internal-live-ingest.service.js";
 import { endLiveSession } from "./live-sessions.service.js";
-import { upsertBuyingIntentQueueFromComment, updateBuyingIntentQueueStatus } from "./buying-intent-queue.service.js";
 import { saveLiveComment } from "./live-comments.service.js";
 import { matchPresetByComment } from "./product-presets.service.js";
 import { AUTO_DRAFT_MIN_SCORE, RECOMMEND_MIN_SCORE } from "./comment-scoring/index.js";
@@ -207,7 +206,6 @@ async function ingestComment(room: RoomState, data: any) {
       ...commentPayload,
       intent: comment.intent,
       topic: comment.topic,
-      confidence: comment.confidence,
       productReference: comment.productReference,
       priorityLevel: comment.priorityLevel,
       finalScore: comment.finalScore,
@@ -227,16 +225,7 @@ async function ingestComment(room: RoomState, data: any) {
 
   sendRoomSse(room, shopId, "COMMENT", realtimePayload);
 
-  let queueItem: Awaited<ReturnType<typeof upsertBuyingIntentQueueFromComment>> | null = null;
-  try {
-    queueItem = await upsertBuyingIntentQueueFromComment(comment);
-    if (queueItem) sendRoomSse(room, shopId, "BUYING_INTENT_UPDATED", { item: queueItem });
-  } catch (e: any) {
-    // ponytail: queue is secondary; never drop the live comment because queue upsert failed.
-    logger.warn({ err: e?.message, commentId: comment.id }, "[TIKTOK] buying intent queue failed");
-  }
-
-  const recommendationScore = Number(comment.finalScore ?? comment.confidence ?? 0);
+  const recommendationScore = Number(comment.finalScore ?? 0);
   const isBuyWithPreset =
     comment.intent === "buy" && comment.canCreateOrder && Boolean(comment.matchedProductCode);
 
@@ -252,7 +241,8 @@ async function ingestComment(room: RoomState, data: any) {
       const ownerUserId = room.userId || (await findShopOwnerUserId(shopId));
       if (ownerUserId) {
         // ponytail: truyền matchedProductCode làm override — dùng đúng preset đã match lúc
-        // phân loại, không fuzzy match lại lần 2. Khách đã có draft trong phiên → tự ghép đơn.
+        // phân loại, không fuzzy match lại lần 2. Luôn tạo order riêng (không tự ghép nữa —
+        // gộp đơn giờ chỉ làm thủ công qua flow "Gộp đơn" trong customer detail).
         const orderResult = await createOrderFromComment({
           shopId,
           userId: ownerUserId,
@@ -263,20 +253,6 @@ async function ingestComment(room: RoomState, data: any) {
         });
         autoCreated = true;
 
-        // Khách đã có đơn → queue item chuyển "handled" để tab Cần xử lý không hỏi lại.
-        if (queueItem) {
-          try {
-            const handledItem = await updateBuyingIntentQueueStatus({
-              shopId,
-              itemId: queueItem.id,
-              status: "handled",
-            });
-            sendRoomSse(room, shopId, "BUYING_INTENT_UPDATED", { item: handledItem });
-          } catch (e: any) {
-            logger.warn({ err: e?.message }, "[TIKTOK] auto order: queue handled update failed");
-          }
-        }
-
         sendRoomSse(room, shopId, "ORDER_AUTO_CREATED", {
           shopId,
           liveSessionId: sessionId,
@@ -286,7 +262,9 @@ async function ingestComment(room: RoomState, data: any) {
           displayName: comment.displayName,
           orderId: orderResult.orderId,
           orderCode: orderResult.orderCode,
-          merged: Boolean(orderResult.merged),
+          // ponytail: merge tự động đã bị bỏ (createOrderFromComment luôn tạo order riêng) —
+          // giữ field "merged" = false để không phá payload SSE Mobile đang đọc.
+          merged: false,
           confidence: recommendationScore,
           commentText: comment.commentText,
           createdAt: nowIso(),

@@ -1,6 +1,6 @@
 import { normalizeComment } from "./comment-normalize.js";
 import { topicKeywords } from "./comment-keywords.js";
-import type { CommentIntent, CommentTopic, ParsedCommentData } from "./comment-intent.js";
+import type { CommentIntent, CommentTopic, EntityHints, ParsedCommentData } from "./comment-types.js";
 
 export function escapeRegExp(input: string) {
   return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -78,15 +78,6 @@ export function detectTopic(text: string, hasStrongSignal: boolean): CommentTopi
   return "unknown";
 }
 
-export function scoreConfidence(matchedCount: number, hasMultipleKeywords: boolean, hasProductRef: boolean, textWordCount: number): number {
-  if (matchedCount === 0) return 0.3;
-  let base = 0.6;
-  if (hasMultipleKeywords) base = 0.85;
-  if (hasProductRef) base += 0.05;
-  if (textWordCount <= 3) base -= 0.15;
-  return Math.min(0.95, Math.max(0.25, base));
-}
-
 const SIZE_TOKEN_PATTERN = /\b(?:size\s+|sz\s+)?(xxl|xl|l|m|s|xs)\b(?:\s*(\d{1,3}))?/i;
 const SIZE_PLAIN_PATTERN = /\b(size|sz|cỡ|co)\s*[:#]?\s*([a-z0-9]{1,4})\b/i;
 
@@ -151,14 +142,16 @@ export function hasNegation(text: string): boolean {
   return NEGATION_PATTERNS.some((p) => p.test(clean));
 }
 
-// ── entity hints — extract even when NEED_LLM, for LLM to use
-export type EntityHints = {
-  productCode: string | null;
-  color: string | null;
-  size: string | null;
-  quantity: number | null;
-  destination: string | null;
-};
+// ── entity hints — extract even when NEED_LLM, for LLM to use (type ở comment-types.ts)
+export type { EntityHints } from "./comment-types.js";
+
+export const EMPTY_HINTS: EntityHints = Object.freeze({
+  productCode: null,
+  color: null,
+  size: null,
+  quantity: null,
+  destination: null,
+}) as EntityHints;
 
 const DESTINATION_PATTERN = /\b(giao|ship|gửi|gui)\s*(đến|den|toi|tới|ve|về)?\s*([a-zA-ZÀ-ỹ\s]{2,30})$/i;
 

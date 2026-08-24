@@ -13,7 +13,6 @@ export type SseEventName =
   | "LIVE_TIME_ENDED"
   | "COMMENT"
   | "COMMENT_SAVED"
-  | "BUYING_INTENT_UPDATED"
   | "ORDER_RECOMMENDED"
   | "ORDER_AUTO_CREATED"
   | "MESSAGE"

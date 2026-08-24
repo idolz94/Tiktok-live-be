@@ -1,98 +1,90 @@
-export type CommentIntent =
-  | "buy"
-  | "already_ordered"
-  | "ask_price"
-  | "ask_stock"
-  | "ask_shipping"
-  | "ask_product"
-  | "ask_product_demo"
-  | "ask_how_to_buy"
-  // ponytail: khách đang lưỡng lự/so sánh giữa 2+ lựa chọn (vd "phân vân màu xanh với nâu") —
-  // tín hiệu mua mạnh, tách riêng khỏi ask_product để seller lọc ra chủ động tư vấn chốt đơn.
-  | "undecided"
-  | "normal"
-  | "spam"
-  | "user";
+// ponytail: stage SCORE + entry `analyzeLiveCommentIntent` — rule engine thuần cho 1 đoạn text.
+//
+//   text → normalize → [spam?] → classifyIntent (comment-classify.ts) → applyScoreBonuses
+//        → priority/topic → parse entities → CommentIntentResult
+//
+// File này KHÔNG biết gì về host/preset/DB/LLM. Mọi con số nằm ở comment-config.ts.
 
-export type CommentTopic = "size" | "color" | "material" | "weight" | "capacity" | "fee" | "delivery_time" | "size_variant" | "unknown";
-export type PriorityLevel = "high" | "medium" | "low" | "normal";
-
-export type ParsedCommentData = {
-  productCode: string | null;
-  color: string | null;
-  size: string | null;
-  quantity: number | null;
-};
-
-export type CommentRuleResult = {
-  intent: CommentIntent;
-  topic?: CommentTopic;
-  confidence: number;
-  priorityLevel: PriorityLevel;
-  finalScore: number;
-  canSuggestOrder: boolean;
-  canCreateDraftOrder: boolean;
-  isPotentialBuyer: boolean;
-  isQuestion: boolean;
-  matchedReasons: string[];
-  productReference?: string;
-  parsedData?: ParsedCommentData;
-  missingFields?: string[];
-  suggestedReply?: string;
-};
-
-export type CommentIntentResult = CommentRuleResult & {
-  canCreateOrder: boolean;
-};
-
+import type {
+  CommentIntent,
+  CommentIntentResult,
+  CommentRuleResult,
+  IntentClassification,
+  ParsedCommentData,
+  PriorityLevel,
+} from "./comment-types.js";
+import { PRIORITY_BANDS, SCORE_BONUS, SCORE_MAX, SCORE_MIN, potentialBuyerIntents } from "./comment-config.js";
 import { normalizeComment, stripMetadataNoise } from "./comment-normalize.js";
-import {
-  alreadyOrderedKeywords,
-  buyKeywords,
-  howToBuyKeywords,
-  priceKeywords,
-  potentialBuyerIntents,
-  productDemoKeywords,
-  productKeywords,
-  shippingKeywords,
-  spamKeywords,
-  stockKeywords,
-  undecidedKeywords,
-  weakProductKeywords,
-} from "./comment-keywords.js";
+import { classifyIntent, matchSpam } from "./comment-classify.js";
 import {
   computeMissingFields,
   detectTopic,
   extractProductReference,
   includesAny,
-  matchKeywords,
   parseCommentData,
-  scoreConfidence,
 } from "./comment-extract.js";
 
-export { normalizeComment } from "./comment-normalize.js";
-export { removeVietnameseAccents, stripMetadataNoise, META_NOISE_PATTERNS } from "./comment-normalize.js";
+// re-export để code cũ import từ đây vẫn chạy
+export type { CommentIntent, CommentIntentResult, CommentRuleResult, CommentTopic, ParsedCommentData, PriorityLevel } from "./comment-types.js";
+export { normalizeComment, removeVietnameseAccents, stripMetadataNoise, META_NOISE_PATTERNS } from "./comment-normalize.js";
 
-function isQuestion(text: string) {
+// ── question / negation detectors ────────────────────────────────────────────────────────
+const QUESTION_WORDS = [
+  "không", "khong", "ko", "bao nhiêu", "bao nhieu", "mấy", "may", "thế nào", "the nao",
+  "được không", "duoc khong", "có được", "co duoc", "nào", "nao", "hả", "ha", "nhỉ", "nhi",
+  "ạ", "hong", "hông", "hk",
+];
+const QUESTION_TAIL_RE = /\bk\s*[?.!]*$/i;
+const QUESTION_SHORT_NEG_RE = /\b(k|ko|hk|hong|hông)\b/i;
+
+export function isQuestion(text: string): boolean {
   if (text.includes("?")) return true;
-  if (includesAny(text, ["không", "khong", "ko", "bao nhiêu", "bao nhieu", "mấy", "may", "thế nào", "the nao", "được không", "duoc khong", "có được", "co duoc", "nào", "nao", "hả", "ha", "nhỉ", "nhi", "ạ", "hong", "hông", "hk"])) return true;
-  if (/\bk\s*[?.!]*$/i.test(text)) return true;
-  if (/\b(k|ko|hk|hong|hông)\b/i.test(text)) return true;
+  if (includesAny(text, QUESTION_WORDS)) return true;
+  if (QUESTION_TAIL_RE.test(text)) return true;
+  if (QUESTION_SHORT_NEG_RE.test(text)) return true;
   return false;
 }
 
 const NEGATION_RE = /(khong\s+lay|không\s+lấy|khong\s+mua|không\s+mua|khong\s+can|không\s+cần|\bđừng\b|\bthoi\s+khong|\bthôi\s+không|\bhuy\b|\bcancel\b)/i;
-function isNegated(text: string) { return NEGATION_RE.test(text.toLowerCase()); }
+export function isNegated(text: string): boolean {
+  return NEGATION_RE.test(text.toLowerCase());
+}
 
-function priorityFromScore(finalScore: number): PriorityLevel {
-  if (finalScore >= 85) return "high";
-  if (finalScore >= 60) return "medium";
-  if (finalScore >= 35) return "low";
+// ── score helpers ────────────────────────────────────────────────────────────────────────
+export function priorityFromScore(finalScore: number): PriorityLevel {
+  for (const band of PRIORITY_BANDS) if (finalScore >= band.min) return band.level;
   return "normal";
 }
 
-function withLegacyOrderFlag(result: CommentRuleResult): CommentIntentResult {
-  return { ...result, canCreateOrder: result.canCreateDraftOrder };
+export function clampScore(score: number): number {
+  return Math.max(SCORE_MIN, Math.min(SCORE_MAX, score));
+}
+
+export function isPotentialBuyerIntent(intent: CommentIntent): boolean {
+  return potentialBuyerIntents.includes(intent);
+}
+
+export type ScoreBonusInput = {
+  classification: IntentClassification;
+  question: boolean;
+  productReference: string | undefined;
+  parsed: ParsedCommentData;
+  negated: boolean;
+  shopBoost: boolean;
+};
+
+/** Cộng bonus lên baseScore → finalScore (đã clamp 0–100). Pure. */
+export function applyScoreBonuses(input: ScoreBonusInput): number {
+  const { classification: c, question, productReference, parsed, negated, shopBoost } = input;
+  let bonus = 0;
+  if (question) bonus += c.intent === "normal" ? SCORE_BONUS.questionOnNormal : SCORE_BONUS.questionOnIntent;
+  if (productReference) bonus += SCORE_BONUS.productReference;
+  else if (c.hasProductKeyword) bonus += SCORE_BONUS.productKeyword;
+  if ((parsed.color || parsed.size) && !c.hasWeakProductKeyword) bonus += SCORE_BONUS.colorOrSize;
+  if (parsed.quantity) bonus += SCORE_BONUS.quantity;
+  if (negated) bonus += SCORE_BONUS.negation;
+  if (shopBoost) bonus += SCORE_BONUS.shopPresetBoost;
+  return clampScore(c.baseScore + bonus);
 }
 
 export function buildSuggestedReply(intent: CommentIntent, missingFields: string[]): string {
@@ -104,185 +96,116 @@ export function buildSuggestedReply(intent: CommentIntent, missingFields: string
   return `Shop hỏi thêm: ${parts.join(", ")} để chốt đơn nhé ạ.`;
 }
 
+// ── result builders ──────────────────────────────────────────────────────────────────────
+const EMPTY_PARSED: ParsedCommentData = { productCode: null, color: null, size: null, quantity: null };
+
+function withLegacyOrderFlag(result: CommentRuleResult): CommentIntentResult {
+  return { ...result, canCreateOrder: result.canCreateDraftOrder };
+}
+
+/** Kết quả "không có gì để làm" — dùng cho text rỗng, spam, không match reason nào. */
+export function emptyIntentResult(overrides: Partial<CommentRuleResult> = {}): CommentIntentResult {
+  return withLegacyOrderFlag({
+    intent: "normal",
+    topic: "unknown",
+    priorityLevel: "normal",
+    finalScore: 0,
+    canSuggestOrder: false,
+    canCreateDraftOrder: false,
+    isPotentialBuyer: false,
+    isQuestion: false,
+    matchedReasons: [],
+    parsedData: { ...EMPTY_PARSED },
+    missingFields: [],
+    suggestedReply: "",
+    ...overrides,
+  });
+}
+
+/**
+ * Dựng CommentIntentResult từ intent + score đã chốt. Tất cả các flag phái sinh
+ * (priority, canSuggestOrder, canCreateDraftOrder, isPotentialBuyer, missingFields, suggestedReply)
+ * được tính lại ở đây — LLM stage cũng dùng hàm này sau khi override intent/score để không
+ * có chỗ thứ 2 tự suy flag.
+ */
+export function finalizeIntentResult(input: {
+  intent: CommentIntent;
+  finalScore: number;
+  topic: CommentRuleResult["topic"];
+  isQuestion: boolean;
+  matchedReasons: string[];
+  productReference: string | undefined;
+  parsedData: ParsedCommentData;
+}): CommentIntentResult {
+  const finalScore = clampScore(input.finalScore);
+  const missingFields = computeMissingFields(input.parsedData, input.intent);
+  return withLegacyOrderFlag({
+    intent: input.intent,
+    topic: input.topic,
+    priorityLevel: priorityFromScore(finalScore),
+    finalScore,
+    canSuggestOrder: input.intent === "buy",
+    canCreateDraftOrder: input.intent === "buy" && Boolean(input.productReference),
+    isPotentialBuyer: isPotentialBuyerIntent(input.intent),
+    isQuestion: input.isQuestion,
+    matchedReasons: input.matchedReasons,
+    productReference: input.productReference,
+    parsedData: input.parsedData,
+    missingFields,
+    suggestedReply: buildSuggestedReply(input.intent, missingFields),
+  });
+}
+
+// ── entry ────────────────────────────────────────────────────────────────────────────────
 export function analyzeLiveCommentIntent(commentText: string, opts?: { shopBoost?: boolean }): CommentIntentResult {
   const cleanedText = stripMetadataNoise(String(commentText || "").trim());
   const text = normalizeComment(cleanedText);
+  if (!text) return emptyIntentResult();
 
-  if (!text) {
-    return withLegacyOrderFlag({
-      intent: "normal",
-      topic: "unknown",
-      confidence: 0,
-      priorityLevel: "normal",
-      finalScore: 0,
-      canSuggestOrder: false,
-      canCreateDraftOrder: false,
-      isPotentialBuyer: false,
-      isQuestion: false,
-      matchedReasons: [],
-      parsedData: { productCode: null, color: null, size: null, quantity: null },
-      missingFields: [],
-      suggestedReply: "",
+  const classification = classifyIntent(text);
+  // "phân vân..." không có dấu "?" nhưng bản chất là cần seller tư vấn → coi như câu hỏi
+  const question = isQuestion(text) || classification.hasUndecidedKeyword;
+
+  // spam short-circuit — không chấm điểm gì thêm
+  const spamMatches = matchSpam(text);
+  if (spamMatches.length > 0) {
+    return emptyIntentResult({
+      intent: "spam",
+      isQuestion: question,
+      matchedReasons: spamMatches.map((item) => `Spam: ${item}`),
     });
   }
 
   const productReference = extractProductReference(text);
-  const textWordCount = text.split(/\s+/).filter(Boolean).length;
-  // ponytail: tính sớm để gộp vào "question" — câu "phân vân..." không có dấu "?" nhưng về bản
-  // chất là đang cần seller trả lời/tư vấn, nên coi như 1 dạng câu hỏi.
-  const undecidedMatches = matchKeywords(text, undecidedKeywords);
-  const question = isQuestion(text) || undecidedMatches.length > 0;
+  const parsed = parseCommentData(text, productReference);
+  const negated = isNegated(text);
 
-  const spamMatches = matchKeywords(text, spamKeywords);
-  if (spamMatches.length > 0) {
-    return withLegacyOrderFlag({
-      intent: "spam",
-      topic: "unknown",
-      confidence: 0.95,
-      priorityLevel: "normal",
-      finalScore: 0,
-      canSuggestOrder: false,
-      canCreateDraftOrder: false,
-      isPotentialBuyer: false,
-      isQuestion: question,
-      matchedReasons: spamMatches.map((item) => `Spam: ${item}`),
-      parsedData: { productCode: null, color: null, size: null, quantity: null },
-      missingFields: [],
-      suggestedReply: "",
-    });
-  }
+  const finalScore = applyScoreBonuses({
+    classification,
+    question,
+    productReference,
+    parsed,
+    negated,
+    shopBoost: Boolean(opts?.shopBoost),
+  });
 
-  const buyMatches = matchKeywords(text, buyKeywords);
-  const alreadyOrderedMatches = matchKeywords(text, alreadyOrderedKeywords);
-  const productDemoMatches = matchKeywords(text, productDemoKeywords);
-  const priceMatches = matchKeywords(text, priceKeywords);
-  const stockMatches = matchKeywords(text, stockKeywords);
-  const shippingMatches = matchKeywords(text, shippingKeywords);
-  const productMatches = matchKeywords(text, productKeywords);
-  const weakProductMatches = matchKeywords(text, weakProductKeywords);
-  const howToBuyMatches = matchKeywords(text, howToBuyKeywords);
-  // ponytail: "mẫu" trùng "màu" sau khi bỏ dấu — nhưng "mẫu <số>" (hỏi mẫu sản phẩm, vd
-  // "mẫu 3") mang nghĩa hoàn toàn khác "màu đen" (hỏi màu sắc). weakProductKeywords chỉ bắt
-  // được "mau" như tín hiệu màu yếu, nên bù thêm 1 tín hiệu riêng cho case "mau" + số.
-  const hasModelNumberRef = /\bmau\s*#?\s*\d{1,4}\b/.test(text);
-  const matchedReasons: string[] = [];
+  const topic = detectTopic(text, finalScore >= 60);
 
-  for (const item of buyMatches) matchedReasons.push(`Có ý định mua: ${item}`);
-  for (const item of alreadyOrderedMatches) matchedReasons.push(`Đã đặt/mua rồi: ${item}`);
-  for (const item of productDemoMatches) matchedReasons.push(`Yêu cầu demo sản phẩm: ${item}`);
-  for (const item of priceMatches) matchedReasons.push(`Hỏi giá/voucher: ${item}`);
-  for (const item of stockMatches) matchedReasons.push(`Hỏi tồn kho: ${item}`);
-  for (const item of shippingMatches) matchedReasons.push(`Hỏi vận chuyển: ${item}`);
-  for (const item of productMatches) matchedReasons.push(`Hỏi sản phẩm: ${item}`);
-  for (const item of weakProductMatches) matchedReasons.push(`Tín hiệu sản phẩm yếu: ${item}`);
-  if (hasModelNumberRef) matchedReasons.push("Hỏi sản phẩm: mẫu (số)");
-  for (const item of undecidedMatches) matchedReasons.push(`Đang phân vân: ${item}`);
-  for (const item of howToBuyMatches) matchedReasons.push(`Hỏi cách mua: ${item}`);
+  const matchedReasons = [...classification.matchedReasons];
+  if (question && classification.intent === "normal") matchedReasons.push("Có dấu hiệu là câu hỏi của khách");
 
-  let intent: CommentIntent = "normal";
-  let baseScore = 0;
-
-  if (alreadyOrderedMatches.length > 0) {
-    intent = "already_ordered";
-    baseScore = 80;
-  } else if (buyMatches.length > 0) {
-    intent = "buy";
-    baseScore = 90;
-  } else if (productDemoMatches.length > 0) {
-    intent = "ask_product_demo";
-    baseScore = 88;
-  } else if (howToBuyMatches.length > 0) {
-    intent = "ask_how_to_buy";
-    baseScore = 85;
-  } else if (undecidedMatches.length > 0) {
-    intent = "undecided";
-    baseScore = 75;
-  } else if (priceMatches.length > 0) {
-    intent = "ask_price";
-    baseScore = 75;
-  } else if (stockMatches.length > 0) {
-    intent = "ask_stock";
-    baseScore = 70;
-  } else if (shippingMatches.length > 0) {
-    intent = "ask_shipping";
-    baseScore = 65;
-  } else if (productMatches.length > 0 || hasModelNumberRef) {
-    intent = "ask_product";
-    baseScore = 60;
-  } else if (weakProductMatches.length > 0) {
-    intent = "ask_product";
-    baseScore = 30;
-  }
-
-  // ponytail: parse before scoring so bonuses can use entities; keep it cheap
-  const earlyParsed = parseCommentData(text, productReference);
-  let bonus = 0;
-  // question: +25 keeps normal question above casual threshold, otherwise +5
-  if (question) bonus += intent === "normal" ? 25 : 5;
-  if (productReference) bonus += 10;
-  else if (productMatches.length > 0) bonus += 5;
-  // ponytail: color/size entity +5, but not double-count weak (weak already is color/size)
-  if ((earlyParsed.color || earlyParsed.size) && weakProductMatches.length === 0) bonus += 5;
-  if (earlyParsed.quantity) bonus += 5;
-  if (isNegated(text)) bonus -= 20;
-  if (opts?.shopBoost) bonus += 25;
-  let finalScore = Math.max(0, Math.min(100, baseScore + bonus));
-
-  const hasStrongSignal = finalScore >= 60;
-  const topic = detectTopic(text, hasStrongSignal);
-  const totalMatched =
-    buyMatches.length +
-    alreadyOrderedMatches.length +
-    productDemoMatches.length +
-    priceMatches.length +
-    stockMatches.length +
-    shippingMatches.length +
-    productMatches.length +
-    weakProductMatches.length +
-    howToBuyMatches.length;
-  const confidence = scoreConfidence(totalMatched, totalMatched >= 2, Boolean(productReference), textWordCount);
-
-  if (question && intent === "normal") {
-    matchedReasons.push("Có dấu hiệu là câu hỏi của khách");
-  }
-
+  // không có tín hiệu nào → normal/0 điểm (kể cả khi là câu hỏi — giữ hành vi cũ)
   if (matchedReasons.length === 0) {
-    return withLegacyOrderFlag({
-      intent: "normal",
-      topic,
-      confidence,
-      priorityLevel: "normal",
-      finalScore: 0,
-      canSuggestOrder: false,
-      canCreateDraftOrder: false,
-      isPotentialBuyer: false,
-      isQuestion: question,
-      matchedReasons: [],
-      productReference,
-      parsedData: { productCode: null, color: null, size: null, quantity: null },
-      missingFields: [],
-      suggestedReply: "",
-    });
+    return emptyIntentResult({ topic, isQuestion: question, productReference });
   }
 
-  const parsedData = parseCommentData(text, productReference);
-  const missingFields = computeMissingFields(parsedData, intent);
-  const suggestedReply = buildSuggestedReply(intent, missingFields);
-
-  return withLegacyOrderFlag({
-    intent,
-    topic,
-    confidence,
-    priorityLevel: priorityFromScore(finalScore),
+  return finalizeIntentResult({
+    intent: classification.intent,
     finalScore,
-    canSuggestOrder: intent === "buy",
-    canCreateDraftOrder: intent === "buy" && Boolean(productReference),
-    isPotentialBuyer: (potentialBuyerIntents as readonly string[]).includes(intent),
+    topic,
     isQuestion: question,
     matchedReasons,
     productReference,
-    parsedData,
-    missingFields,
-    suggestedReply,
+    parsedData: parsed,
   });
 }

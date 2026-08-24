@@ -4,7 +4,7 @@ import { liveComments } from "../db/schema/index.js";
 import { getCommentAvatar, getCommentDisplayName, getCommentText, hasNumber } from "../utils/comment.js";
 import { getCommentTikTokUsername, normalizeAtUsername } from "../utils/tiktok.js";
 import { updateLiveSessionCommentCount } from "./live-sessions.service.js";
-import { scoreCommentForShop } from "./comment-scoring/index.js";
+import { RULE_VERSION, scoreCommentForShop } from "./comment-scoring/index.js";
 import logger from "../lib/logger.js";
 
 export async function saveLiveComment({
@@ -32,15 +32,16 @@ export async function saveLiveComment({
 
   const pipeline = await scoreCommentForShop(shopId, commentText, { isHost });
 
-  // ponytail: dot1 gate — NEED_LLM only logged, no LLM call yet
+  // ponytail: NEED_LLM ở đây nghĩa là chưa cấu hình LLM resolver (configureCommentScoring) hoặc
+  // resolver lỗi/timeout (resolvedBy = rule_fallback) → dùng kết quả rule như cũ.
   if (pipeline.verdict === "NEED_LLM") {
     logger.debug(
-      { text: commentText.slice(0, 80), intent: pipeline.intent, missingFields: pipeline.missingFields },
-      "[PIPELINE] NEED_LLM — queued for LLM phase 2",
+      { text: commentText.slice(0, 80), intent: pipeline.intent, missingFields: pipeline.missingFields, resolvedBy: pipeline.resolvedBy, llmError: pipeline.llmError },
+      "[PIPELINE] NEED_LLM — resolved by rule",
     );
   }
-  // ponytail: metric hook — count per verdict: pipeline_verdict_total{verdict}
-  logger.debug({ verdict: pipeline.verdict, intent: pipeline.intent }, "[PIPELINE] verdict");
+  // ponytail: metric hook — count per verdict: pipeline_verdict_total{verdict,resolvedBy}
+  logger.debug({ verdict: pipeline.verdict, resolvedBy: pipeline.resolvedBy, intent: pipeline.intent }, "[PIPELINE] verdict");
 
   const payload = {
     shopId,
@@ -64,10 +65,9 @@ export async function saveLiveComment({
     isPotentialBuyer: pipeline.isPotentialBuyer,
     isQuestion: pipeline.isQuestion,
     matchedReasons: pipeline.matchedReasons,
-    ruleVersion: "comment-rules-v1",
+    ruleVersion: RULE_VERSION,
     matchedProductCode: pipeline.matchedPresetCode,
     topic: pipeline.topic,
-    confidence: pipeline.confidence,
     productReference: pipeline.productReference,
     isOrderCreated: Boolean(comment?.isOrderCreated || comment?.is_order_created),
     orderId: comment?.orderId || comment?.order_id || null,

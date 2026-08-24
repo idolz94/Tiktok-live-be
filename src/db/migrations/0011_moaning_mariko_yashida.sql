@@ -1,0 +1,1 @@
+DROP TABLE "buying_intent_queue" CASCADE;

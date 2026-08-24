@@ -1,36 +1,75 @@
-// ponytail: comment-scoring — module nội bộ gộp toàn bộ flow tính score + phân loại intent
-// từ 1 comment TikTok live.
+// ponytail: comment-scoring — public API của module chấm điểm + phân loại intent comment live.
 //
-// scoreCommentText(text)   — làm ĐÚNG 1 việc: chấm điểm + phân loại intent cho 1 đoạn text
-//                             thuần, input chỉ có text, không biết gì về host/preset shop.
-//                             Pure, không đụng DB → chỗ khác cần "chấm 1 câu" có thể gọi thẳng.
-// scoreCommentForShop(...) — bản đầy đủ cho ingest pipeline: tự check isHost, tự match preset
-//                             theo shop qua DB. isHost/matchedPresetCode được xử lý Ở NGOÀI
-//                             scoreCommentText — nếu isHost hoặc có matchedPresetCode thì đi
-//                             thẳng qua engine runCommentPipeline() với context đó, KHÔNG gọi
-//                             scoreCommentText.
+//   comment-types.ts     — type dùng chung (không logic)
+//   comment-config.ts    — MỌI con số: base score, bonus, ngưỡng priority/routing/auto-order
+//   comment-normalize.ts — decode emoji, strip badge/@handle, bỏ dấu
+//   comment-keywords.ts  — từ khoá theo nhóm
+//   comment-extract.ts   — regex trích entity (mã, màu, size, số lượng), topic
+//   comment-filter.ts    — [1] lọc sticker/system event/noise/host
+//   comment-classify.ts  — [4a] keyword → intent + baseScore (bảng INTENT_SIGNALS)
+//   comment-intent.ts    — [4b] bonus → finalScore, priority, flags; entry analyzeLiveCommentIntent
+//   comment-routing.ts   — [6] policy SKIP / RULE_RESOLVED / NEED_LLM
+//   comment-pipeline.ts  — compose [1]→[6], sync, pure (runCommentPipeline)
+//   comment-llm.ts       — [7] hook LLM cho NEED_LLM, có timeout + fallback về rule
 //
-// Output của cả 2 hàm là ScoreCommentResult — bản RÚT GỌN, chỉ giữ field caller thực sự dùng
-// (đối chiếu theo đúng những gì live-comments.service.ts đọc ra để lưu DB). Bỏ các field không
-// ai dùng tới ở tầng này: hints (entity hints), rawText (text đã normalize), reason (lý do SKIP
-// chi tiết), parsedData/suggestedReply (2 field này chỉ buying-intent-queue cần, và nó gọi thẳng
-// analyzeLiveCommentIntent() riêng, không qua đây). Cần dữ liệu đầy đủ hơn thì dùng thẳng
-// runCommentPipeline()/analyzeLiveCommentIntent() (vẫn re-export bên dưới).
+// Hai entry chính:
+//   scoreCommentText(text)          — sync, chỉ text, không DB, không LLM. Dùng cho endpoint
+//                                     internal /score và mọi chỗ "chấm 1 câu".
+//   scoreCommentForShop(shopId,...) — async, bản đầy đủ cho ingest: check host, match preset
+//                                     theo catalog shop (DB), rồi qua LLM stage nếu NEED_LLM và
+//                                     đã configureCommentScoring({ llmResolver }).
+//
+// Cắm LLM: ở bootstrap (server.ts) gọi
+//   configureCommentScoring({ llmResolver: myResolver })
+// với myResolver implement LlmIntentResolver (xem comment-llm.ts). Không cấu hình → hành vi
+// rule-only y như cũ.
 
 import { matchPresetByComment } from "../product-presets.service.js";
-import { runCommentPipeline, type PipelineResult } from "./comment-pipeline.js";
-import type { CommentIntent, CommentTopic, PriorityLevel } from "./comment-intent.js";
+import { runCommentPipeline } from "./comment-pipeline.js";
+import { resolveWithLlm } from "./comment-llm.js";
+import { defaultRoutingPolicy, type RoutingPolicy } from "./comment-routing.js";
+import type {
+  CommentIntent,
+  CommentTopic,
+  LlmIntentResolver,
+  PipelineResult,
+  PipelineVerdict,
+  PriorityLevel,
+  ResolvedBy,
+  ResolvedPipelineResult,
+} from "./comment-types.js";
 
-// Ngưỡng điểm dùng chung cho toàn bộ flow auto-tạo đơn / gợi ý đơn từ comment.
-export const AUTO_DRAFT_MIN_SCORE = Number(process.env.LIVE_AUTO_DRAFT_MIN_SCORE ?? 90);
-export const RECOMMEND_MIN_SCORE = 85;
+export { AUTO_DRAFT_MIN_SCORE, RECOMMEND_MIN_SCORE, RULE_VERSION } from "./comment-config.js";
 
+// ── module config (set 1 lần ở bootstrap) ────────────────────────────────────────────────
+export type CommentScoringConfig = {
+  llmResolver: LlmIntentResolver | null;
+  llmTimeoutMs?: number;
+  routingPolicy: RoutingPolicy;
+};
+
+const config: CommentScoringConfig = {
+  llmResolver: null,
+  routingPolicy: defaultRoutingPolicy,
+};
+
+export function configureCommentScoring(patch: Partial<CommentScoringConfig>): CommentScoringConfig {
+  Object.assign(config, patch);
+  return { ...config };
+}
+
+export function getCommentScoringConfig(): Readonly<CommentScoringConfig> {
+  return config;
+}
+
+// ── output rút gọn — đúng những field live-comments.service ghi DB ───────────────────────
 export type ScoreCommentResult = {
-  verdict: PipelineResult["verdict"];
+  verdict: PipelineVerdict;
+  /** rule | llm | rule_fallback (LLM lỗi/timeout) */
+  resolvedBy: ResolvedBy;
   intent: CommentIntent;
   priorityLevel: PriorityLevel;
   finalScore: number;
-  confidence: number;
   topic: CommentTopic | null;
   canCreateOrder: boolean;
   canSuggestOrder: boolean;
@@ -40,18 +79,21 @@ export type ScoreCommentResult = {
   matchedReasons: string[];
   productReference: string | null;
   matchedPresetCode: string | null;
-  // chỉ có giá trị khi verdict === "NEED_LLM", còn lại luôn []
+  /** chỉ có giá trị khi verdict === "NEED_LLM", còn lại luôn [] */
   missingFields: string[];
+  /** lỗi LLM nếu có (để log), không throw */
+  llmError?: string;
 };
 
-function toScoreCommentResult(pipeline: PipelineResult, matchedPresetCode: string | null): ScoreCommentResult {
+function toScoreCommentResult(pipeline: PipelineResult | ResolvedPipelineResult, matchedPresetCode: string | null): ScoreCommentResult {
   const { result } = pipeline;
+  const resolved = "resolvedBy" in pipeline ? pipeline : null;
   return {
     verdict: pipeline.verdict,
-    intent: pipeline.intent as CommentIntent,
+    resolvedBy: resolved?.resolvedBy ?? "rule",
+    intent: pipeline.intent,
     priorityLevel: result.priorityLevel,
     finalScore: result.finalScore,
-    confidence: result.confidence,
     topic: result.topic ?? null,
     canCreateOrder: result.canCreateOrder,
     canSuggestOrder: result.canSuggestOrder,
@@ -62,50 +104,54 @@ function toScoreCommentResult(pipeline: PipelineResult, matchedPresetCode: strin
     productReference: result.productReference ?? null,
     matchedPresetCode,
     missingFields: pipeline.verdict === "NEED_LLM" ? pipeline.missingFields : [],
+    ...(resolved?.llmError ? { llmError: resolved.llmError } : {}),
   };
 }
 
+// ── entries ──────────────────────────────────────────────────────────────────────────────
+
 /**
- * Chấm điểm + phân loại intent cho 1 đoạn text — pure, chỉ nhận text.
- * Không biết gì về "có phải host không" hay "có match preset không".
+ * Chấm điểm + phân loại intent cho 1 đoạn text — sync, pure, rule-only.
  */
 export function scoreCommentText(commentText: string): ScoreCommentResult {
-  const pipeline = runCommentPipeline(commentText, { isHost: false, matchedPresetCode: null });
+  const pipeline = runCommentPipeline(commentText, { isHost: false, matchedPresetCode: null }, { routingPolicy: config.routingPolicy });
   return toScoreCommentResult(pipeline, null);
 }
 
 /**
- * Chấm điểm cho 1 comment thuộc 1 shop cụ thể — bản đầy đủ dùng cho ingest pipeline thật.
+ * Chấm điểm cho 1 comment thuộc 1 shop cụ thể — bản đầy đủ cho ingest pipeline.
  *
- * isHost và matchedPresetCode được check Ở NGOÀI scoreCommentText:
- *  - isHost=true  → trả thẳng kết quả "user/skip", không match preset (đỡ 1 query DB), không
- *                    gọi scoreCommentText.
- *  - có matchedPresetCode → đi thẳng qua runCommentPipeline() với preset code đó, cũng không
- *                    gọi scoreCommentText.
- *  - còn lại → dùng thẳng scoreCommentText().
+ *  - isHost=true           → SKIP host_comment, không query preset, không LLM.
+ *  - match preset (DB)     → RULE_RESOLVED buy/high (đường "chắc chắn"), không LLM.
+ *  - còn lại               → rule pipeline; nếu NEED_LLM và có resolver → LLM stage.
  */
 export async function scoreCommentForShop(
   shopId: string,
   commentText: string,
-  opts: { isHost?: boolean } = {},
+  opts: { isHost?: boolean; llmResolver?: LlmIntentResolver | null } = {},
 ): Promise<ScoreCommentResult> {
   if (opts.isHost) {
-    const pipeline = runCommentPipeline(commentText, { isHost: true, matchedPresetCode: null });
+    const pipeline = runCommentPipeline(commentText, { isHost: true, matchedPresetCode: null }, { routingPolicy: config.routingPolicy });
     return toScoreCommentResult(pipeline, null);
   }
 
   const matchedPreset = await matchPresetByComment(shopId, commentText);
-  if (!matchedPreset) {
-    return scoreCommentText(commentText);
-  }
+  const matchedPresetCode = matchedPreset?.code ?? null;
+  const pipeline = runCommentPipeline(commentText, { isHost: false, matchedPresetCode }, { routingPolicy: config.routingPolicy });
 
-  const pipeline = runCommentPipeline(commentText, { isHost: false, matchedPresetCode: matchedPreset.code });
-  return toScoreCommentResult(pipeline, matchedPreset.code);
+  const resolver = opts.llmResolver === undefined ? config.llmResolver : opts.llmResolver;
+  const resolved = await resolveWithLlm(pipeline, { resolver, timeoutMs: config.llmTimeoutMs, shopId });
+  return toScoreCommentResult(resolved, matchedPresetCode);
 }
 
-// ── re-exports — giữ nguyên các hàm/type thuần (pure) mà nơi khác vẫn cần dùng trực tiếp,
-// hoặc khi cần dữ liệu đầy đủ hơn ScoreCommentResult (parsedData, hints, rawText...) ──
+// ── re-exports — hàm/type thuần cho nơi cần dữ liệu đầy đủ hơn ScoreCommentResult ────────
 export { analyzeLiveCommentIntent, buildSuggestedReply } from "./comment-intent.js";
+export { runCommentPipeline } from "./comment-pipeline.js";
+export { resolveWithLlm, mergeLlmOutput, createStaticLlmResolver } from "./comment-llm.js";
+export { decideRouting, defaultRoutingPolicy, ruleOnlyRoutingPolicy } from "./comment-routing.js";
+export { classifyIntent, INTENT_SIGNALS } from "./comment-classify.js";
+export { normalizeComment, removeVietnameseAccents, stripMetadataNoise, META_NOISE_PATTERNS } from "./comment-normalize.js";
+export { extractEntityHints, hasNegation, extractProductReference } from "./comment-extract.js";
 export type {
   CommentIntent,
   CommentTopic,
@@ -113,9 +159,14 @@ export type {
   ParsedCommentData,
   CommentRuleResult,
   CommentIntentResult,
-} from "./comment-intent.js";
-export { runCommentPipeline } from "./comment-pipeline.js";
-export type { PipelineVerdict, PipelineContext, PipelineResult } from "./comment-pipeline.js";
-export { normalizeComment, removeVietnameseAccents, stripMetadataNoise, META_NOISE_PATTERNS } from "./comment-normalize.js";
-export { extractEntityHints, hasNegation, extractProductReference } from "./comment-extract.js";
-export type { EntityHints } from "./comment-extract.js";
+  EntityHints,
+  PipelineVerdict,
+  PipelineContext,
+  PipelineResult,
+  ResolvedPipelineResult,
+  ResolvedBy,
+  LlmIntentResolver,
+  LlmResolveInput,
+  LlmResolveOutput,
+} from "./comment-types.js";
+export type { RoutingPolicy } from "./comment-routing.js";

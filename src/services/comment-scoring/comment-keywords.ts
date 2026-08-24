@@ -273,4 +273,5 @@ export const undecidedKeywords = [
   "khong chon duoc",
 ];
 
-export const potentialBuyerIntents = ["buy", "ask_price", "ask_stock", "ask_shipping", "ask_product", "ask_product_demo", "ask_how_to_buy", "undecided"] as const;
+// potentialBuyerIntents đã chuyển sang comment-config.ts (là config điểm/intent, không phải keyword).
+export { potentialBuyerIntents } from "./comment-config.js";

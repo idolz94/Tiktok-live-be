@@ -12,7 +12,6 @@ import customersRoutes from "./routes/customers.routes.js";
 import customerAddressesRoutes from "./routes/customer-addresses.routes.js";
 import shopAddressesRoutes from "./routes/shop-addresses.routes.js";
 import licenseRoutes from "./routes/license.routes.js";
-import buyingIntentQueueRoutes from "./routes/buying-intent-queue.routes.js";
 import liveCommentsRoutes from "./routes/live-comments.routes.js";
 import liveSessionsRoutes from "./routes/live-sessions.routes.js";
 import liveStreamRoutes from "./routes/live-stream.routes.js";
@@ -89,7 +88,6 @@ export function createApp() {
   app.use("/api/live-comments", liveCommentsRoutes);
   app.use("/api/live-sessions", liveSessionsRoutes);
   app.use("/api/live-stream", liveStreamRoutes);
-  app.use("/api/live-intent-queue", buyingIntentQueueRoutes);
 
   app.use("/api/licenses", licenseRoutes);
   app.use("/api/payments", paymentRoutes);

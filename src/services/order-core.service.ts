@@ -1,4 +1,4 @@
-import { eq, and, inArray, sql, gte, lt, desc } from "drizzle-orm";
+import { eq, and, inArray, sql, gte, lt } from "drizzle-orm";
 import { db, type DbOrTx } from "../lib/db.js";
 import { orders, orderItems, orderShipments, shipmentEvents, customerAddresses, customers, liveComments } from "../db/schema/index.js";
 import { badRequest, notFound } from "../lib/api-error.js";
@@ -466,53 +466,9 @@ export async function createOrderFromComment({
     if (existingComment?.isOrderCreated) throw badRequest("Comment này đã được tạo đơn.");
   }
 
-  // ponytail: ghép đơn — khách còn BẤT KỲ đơn draft nào trong shop (không phân biệt phiên live)
-  // thì ghép item vào đơn draft mới nhất thay vì tạo đơn mới. Mục đích: gom về 1 đơn để
-  // khách chỉ trả 1 lần ship, kể cả khi mua rải rác qua nhiều phiên live.
-  if (customer?.id) {
-    const [existingDraft] = await db
-      .select({ id: orders.id, orderCode: orders.orderCode })
-      .from(orders)
-      .where(
-        and(
-          eq(orders.shopId, shopId),
-          eq(orders.customerId, customer.id),
-          eq(orders.status, "draft"),
-        ),
-      )
-      .orderBy(desc(orders.createdAt))
-      .limit(1);
-
-    if (existingDraft) {
-      await db.insert(orderItems).values({
-        orderId: existingDraft.id,
-        shopId,
-        productCode: preset?.code ?? "",
-        productName: preset?.name || preset?.code || commentText,
-        variantName: "",
-        color: overrideColor ?? preset?.color ?? "",
-        size: overrideSize ?? "",
-        quantity: normalizedQuantity,
-        price: safePrice,
-        rawCommentText: commentText,
-      });
-      await updateOrderAmounts(existingDraft.id, shopId);
-      // ponytail: bo qua updateLiveSessionOrderCount (khong tao don moi) va updateCustomerAfterOrder (se tang sai totalOrders)
-      void updateLiveCommentOrder({ commentId: liveCommentId, orderId: existingDraft.id, customerId: customer.id }).catch((err) => {
-        logger.error({ err }, "MERGE_ORDER_FROM_COMMENT_SIDE_EFFECT_FAILED");
-      });
-      return {
-        success: true,
-        message: `Đã ghép vào đơn ${existingDraft.orderCode}.`,
-        orderId: existingDraft.id,
-        orderCode: existingDraft.orderCode,
-        merged: true,
-        presetMatched: preset
-          ? { code: preset.code, name: preset.name, color: preset.color, price: preset.price }
-          : null,
-      };
-    }
-  }
+  // ponytail: KHÔNG tự động ghép đơn ở đây nữa — mỗi lần "Tạo đơn" từ comment luôn tạo order riêng.
+  // Gộp đơn nháp của cùng khách giờ chỉ thực hiện thủ công qua flow "Gộp đơn" trong customer detail
+  // (xem mergeDraftOrders() + POST /api/orders/merge-drafts).
 
   const [order] = await db
     .insert(orders)
