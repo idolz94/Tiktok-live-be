@@ -266,6 +266,11 @@ export async function listOrdersLight(shopId: string, shippingStatus?: string, s
       // nào (OrderItem/normalizeApiOrderForUi fallback về commentText) — thiếu cột này Mobile chỉ
       // còn cách hiện literal "Sản phẩm" (không có gì để fallback).
       commentText: orders.commentText,
+      // ponytail: cần cho fallback GIÁ ở Mobile (buildFallbackProduct check order?.subtotalAmount) —
+      // thiếu cột này Mobile không có gì để fallback ngoài DEFAULT_PRODUCT_PRICE=20000 hardcode,
+      // dù order đã lưu đúng giá thật trong DB (bug hiện ở list "Đơn đã tạo", KHÔNG phải ở giá
+      // đã lưu — order-detail đọc API đầy đủ nên vẫn hiện đúng).
+      subtotalAmount: orders.subtotalAmount,
       createdAt: orders.createdAt,
       updatedAt: orders.updatedAt,
     })
