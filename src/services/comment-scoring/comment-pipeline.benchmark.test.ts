@@ -125,21 +125,13 @@ function measure(samples: Sample[], label: string) {
   const costPerCall = 0.002;
   const costPer1k = llmRate * 1000 * costPerCall;
 
-  // eslint-disable-next-line no-console
   console.log(`\n── 300-comment benchmark — ${label} (n=${n}) ──`);
-  // eslint-disable-next-line no-console
   console.log(`counts: SKIP=${counts.SKIP} RULE_RESOLVED=${counts.RULE_RESOLVED} NEED_LLM=${counts.NEED_LLM} (skip+resolved=${skipResolvedRate.toFixed(2)})`);
-  // eslint-disable-next-line no-console
   console.log(`Rule precision (BUY): ${(precisionBuy * 100).toFixed(1)}%  (${buyResolved - falseBuy}/${buyResolved || 0})`);
-  // eslint-disable-next-line no-console
   console.log(`False BUY rate: ${(falseBuyRate * 100).toFixed(2)}%  (${falseBuy}/${buyResolved || 0})  ${falseBuyExamples.length ? "ex: " + falseBuyExamples.join(" | ") : ""}`);
-  // eslint-disable-next-line no-console
   console.log(`LLM routing rate: ${(llmRate * 100).toFixed(1)}%`);
-  // eslint-disable-next-line no-console
   console.log(`Skipped valid rate (BUY/QUESTION/ALREADY → SKIP): ${(skippedValidRate * 100).toFixed(2)}%  (${skippedValid}/${validTotal})`);
-  // eslint-disable-next-line no-console
   console.log(`Cost /1k comments: $${costPer1k.toFixed(2)}  (@ $${costPerCall}/LLM call)`);
-  // eslint-disable-next-line no-console
   console.log("by truth:", JSON.stringify(byTruth, null, 2));
 
   return { n, counts, buyResolved, falseBuy, falseBuyExamples, precisionBuy, falseBuyRate, llmRate, skippedValidRate, skipResolvedRate, costPer1k, byTruth };
@@ -163,7 +155,6 @@ describe("benchmark 300 — synthetic — pipeline precision (strict gate)", () 
 describe("benchmark 300 — real DB — pipeline precision (report + relaxed)", () => {
   it("loads 300 real comments or skips", () => {
     if (!REAL_SAMPLES) {
-      // eslint-disable-next-line no-console
       console.log("real DB fixture not found — skipping (run dump to generate data/comments-300.json)");
       return;
     }

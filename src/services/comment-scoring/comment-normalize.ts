@@ -3,7 +3,7 @@ import { decodeTikTokEmoji } from "../../utils/tiktokEmoji.js";
 export function removeVietnameseAccents(input: string) {
   return String(input || "")
     .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(/đ/g, "d")
     .replace(/Đ/g, "D");
 }
@@ -16,7 +16,9 @@ export const META_NOISE_PATTERNS = [
 ];
 
 // ponytail: sticker/emoji-only — after stripping emoji+brackets empty + had at least one token = SKIP
+// eslint-disable-next-line no-misleading-character-class
 const EMOJI_G = /[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}]/gu;
+// eslint-disable-next-line no-misleading-character-class
 const EMOJI_RE = /[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}]/u;
 const BRACKET_TOKEN_RE = /\[[^\]]+\]/g;
 

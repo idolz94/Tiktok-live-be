@@ -1,0 +1,150 @@
+name: Deploy Tiktok-live-be
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "openspec/**"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-tiktok-live-be
+  cancel-in-progress: false
+
+env:
+  REGISTRY: registry.quangit.site
+  IMAGE_NAME: dev/tiktok-live-be
+
+jobs:
+  # ── 1. CI: lint + typecheck + test + build ──────────────────
+  ci:
+    name: CI checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint -- --max-warnings=0
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  # ── 2. Build Docker image & push to registry ────────────────
+  docker:
+    name: Build & push image
+    runs-on: ubuntu-latest
+    needs: ci
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Extract image tag (short SHA)
+        id: meta
+        run: echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+  # ── 3. Deploy lên VPS qua SSH ───────────────────────────────
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+    needs: docker
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            DEPLOY_PATH="${{ secrets.VPS_DEPLOY_PATH }}"
+            REGISTRY="${{ env.REGISTRY }}"
+            IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+            TAG="${{ needs.docker.outputs.tag }}"
+
+            echo "→ Deploy path: $DEPLOY_PATH"
+            echo "→ Image: $IMAGE:$TAG"
+
+            cd "$DEPLOY_PATH"
+
+            # Đăng nhập registry trên VPS (để pull image private)
+            echo "${{ secrets.REGISTRY_PASSWORD }}" | docker login "$REGISTRY" -u "${{ secrets.REGISTRY_USERNAME }}" --password-stdin
+
+            # Cập nhật tag mới vào docker-compose.yml (dòng image:)
+            # Nếu file chưa có image với tag động, thay thế tag sau dấu :
+            if grep -q "image:.*$IMAGE" docker-compose.yml; then
+              sed -i -E "s|image:.*$IMAGE.*|image: $IMAGE:$TAG|g" docker-compose.yml
+            else
+              echo "WARN: Không tìm thấy dòng image: $IMAGE trong docker-compose.yml — bỏ qua sed"
+            fi
+            echo "→ docker-compose.yml image line:"
+            grep -E "image:" docker-compose.yml || true
+
+            # Pull image mới & khởi động lại
+            docker compose pull
+            docker compose up -d --remove-orphans
+
+            # Dọn image cũ (giữ lại 2 bản gần nhất)
+            docker image prune -f || true
+
+            # Health check
+            echo "→ Đợi service healthy..."
+            for i in $(seq 1 30); do
+              if curl -sf http://127.0.0.1:3001/health >/dev/null 2>&1; then
+                echo "✓ Backend healthy!"
+                curl -s http://127.0.0.1:3001/health || true
+                break
+              fi
+              echo "  ...chưa sẵn sàng ($i/30)"
+              sleep 2
+              if [ "$i" -eq 30 ]; then
+                echo "✗ Health check timeout — xem logs:"
+                docker compose logs --tail=100
+                exit 1
+              fi
+            done
+
+            docker logout "$REGISTRY" || true
+            echo "✓ Deploy xong: $IMAGE:$TAG"
