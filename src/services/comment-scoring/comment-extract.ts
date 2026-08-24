@@ -1,5 +1,5 @@
 import { normalizeComment } from "./comment-normalize.js";
-import { topicKeywords } from "./comment-keywords.js";
+import { pinnedReferenceKeywords, topicKeywords } from "./comment-keywords.js";
 import type { CommentIntent, CommentTopic, EntityHints, ParsedCommentData } from "./comment-types.js";
 
 export function escapeRegExp(input: string) {
@@ -140,6 +140,13 @@ const NEGATION_PATTERNS = [
 export function hasNegation(text: string): boolean {
   const clean = text.toLowerCase();
   return NEGATION_PATTERNS.some((p) => p.test(clean));
+}
+
+// ponytail: comment nói "như video/như hình/cái này..." (không nêu mã/tên cụ thể) — chỉ có ý
+// nghĩa khi phiên live đang có 1 sản phẩm được ghim (pinnedPresetCode). Text truyền vào PHẢI đã
+// qua normalizeComment (bỏ dấu, thường hoá) — xem comment-pipeline.ts.
+export function referencesPinnedItem(text: string): boolean {
+  return includesAny(text, pinnedReferenceKeywords);
 }
 
 // ── entity hints — extract even when NEED_LLM, for LLM to use (type ở comment-types.ts)

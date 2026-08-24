@@ -3,7 +3,7 @@ import { db } from "../lib/db.js";
 import { liveComments } from "../db/schema/index.js";
 import { getCommentAvatar, getCommentDisplayName, getCommentText, hasNumber } from "../utils/comment.js";
 import { getCommentTikTokUsername, normalizeAtUsername } from "../utils/tiktok.js";
-import { updateLiveSessionCommentCount } from "./live-sessions.service.js";
+import { getLiveSessionPinnedPresetCode, updateLiveSessionCommentCount } from "./live-sessions.service.js";
 import { RULE_VERSION, scoreCommentForShop } from "./comment-scoring/index.js";
 import logger from "../lib/logger.js";
 
@@ -30,7 +30,10 @@ export async function saveLiveComment({
   const normalizedLiveUser = liveUsername ? normalizeAtUsername(liveUsername) : "";
   const isHost = Boolean(normalizedLiveUser && tiktokUsername === normalizedLiveUser);
 
-  const pipeline = await scoreCommentForShop(shopId, commentText, { isHost });
+  // ponytail: lấy sản phẩm đang ghim của phiên live (nếu có) để suy ra sản phẩm cho comment
+  // buy mơ hồ kiểu "như video/cái này" — xem resolvePinnedProductReference trong comment-scoring.
+  const pinnedPresetCode = await getLiveSessionPinnedPresetCode(liveSessionId);
+  const pipeline = await scoreCommentForShop(shopId, commentText, { isHost, pinnedPresetCode });
 
   // ponytail: NEED_LLM ở đây nghĩa là chưa cấu hình LLM resolver (configureCommentScoring) hoặc
   // resolver lỗi/timeout (resolvedBy = rule_fallback) → dùng kết quả rule như cũ.

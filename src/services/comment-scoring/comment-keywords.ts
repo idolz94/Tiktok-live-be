@@ -273,5 +273,41 @@ export const undecidedKeywords = [
   "khong chon duoc",
 ];
 
+// ponytail: comment nhắc tới sản phẩm ĐANG được host giới thiệu trên live (không nêu mã/tên cụ
+// thể) — chỉ dùng để suy ra sản phẩm khi phiên live có "sản phẩm đang ghim" (xem
+// live-sessions.service.ts setLiveSessionPinnedProduct + comment-scoring/index.ts).
+export const pinnedReferenceKeywords = [
+  "như video",
+  "nhu video",
+  "như trong video",
+  "nhu trong video",
+  "giống video",
+  "giong video",
+  "như hình",
+  "nhu hinh",
+  "như trong hình",
+  "nhu trong hinh",
+  "giống hình",
+  "giong hinh",
+  "y hình",
+  "y hinh",
+  "y chang video",
+  "y chang hinh",
+  "như trên",
+  "nhu tren",
+  "cái này",
+  "cai nay",
+  "sản phẩm này",
+  "san pham nay",
+  "món này",
+  "mon nay",
+  "sp này",
+  "sp nay",
+  "cái đó",
+  "cai do",
+  "món đó",
+  "mon do",
+];
+
 // potentialBuyerIntents đã chuyển sang comment-config.ts (là config điểm/intent, không phải keyword).
 export { potentialBuyerIntents } from "./comment-config.js";

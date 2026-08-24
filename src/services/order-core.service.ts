@@ -262,6 +262,10 @@ export async function listOrdersLight(shopId: string, shippingStatus?: string, s
       providerCode: orders.providerCode,
       liveSessionId: orders.liveSessionId,
       customerId: orders.customerId,
+      // ponytail: cần cho fallback hiển thị "tên sản phẩm" ở Mobile khi order không match preset
+      // nào (OrderItem/normalizeApiOrderForUi fallback về commentText) — thiếu cột này Mobile chỉ
+      // còn cách hiện literal "Sản phẩm" (không có gì để fallback).
+      commentText: orders.commentText,
       createdAt: orders.createdAt,
       updatedAt: orders.updatedAt,
     })

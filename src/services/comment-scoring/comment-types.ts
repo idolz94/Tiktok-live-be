@@ -146,7 +146,13 @@ export interface LlmIntentResolver {
   resolve(input: LlmResolveInput, opts: { signal: AbortSignal }): Promise<LlmResolveOutput | null>;
 }
 
-export type ResolvedBy = "rule" | "llm" | "rule_fallback";
+export type ResolvedBy =
+  | "rule"
+  | "llm"
+  | "rule_fallback"
+  // ponytail: buy comment mơ hồ ("như video", "cái này"...) được suy ra từ sản phẩm ĐANG GHIM
+  // của phiên live — xem comment-scoring/index.ts.
+  | "rule_pinned";
 
 export type ResolvedPipelineResult = PipelineResult & {
   resolvedBy: ResolvedBy;

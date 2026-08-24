@@ -24,10 +24,13 @@
 // với myResolver implement LlmIntentResolver (xem comment-llm.ts). Không cấu hình → hành vi
 // rule-only y như cũ.
 
-import { matchPresetByComment } from "../product-presets.service.js";
+import { getProductPresetByCode, matchPresetByComment } from "../product-presets.service.js";
 import { runCommentPipeline } from "./comment-pipeline.js";
 import { resolveWithLlm } from "./comment-llm.js";
 import { defaultRoutingPolicy, type RoutingPolicy } from "./comment-routing.js";
+import { referencesPinnedItem } from "./comment-extract.js";
+import { finalizeIntentResult } from "./comment-intent.js";
+import { ROUTING } from "./comment-config.js";
 import type {
   CommentIntent,
   CommentTopic,
@@ -40,6 +43,50 @@ import type {
 } from "./comment-types.js";
 
 export { AUTO_DRAFT_MIN_SCORE, RECOMMEND_MIN_SCORE, RULE_VERSION } from "./comment-config.js";
+
+// ponytail: comment "buy" mơ hồ (không có mã/tên SP — verdict NEED_LLM) nhưng nhắc kiểu "như
+// video/cái này" (referencesPinnedItem) → nếu phiên live đang ghim 1 sản phẩm (pinnedPresetCode,
+// set qua PATCH /api/live-sessions/:id/pinned-product), suy ra luôn sản phẩm đó — KHÔNG cần LLM.
+// Chạy TRƯỚC bước LLM (rẻ hơn, và nên ưu tiên rule nếu đã đủ chắc). Trả null nếu không áp dụng
+// (giữ nguyên verdict NEED_LLM để rơi xuống LLM stage/giữ nguyên rule như cũ).
+async function resolvePinnedProductReference(
+  pipeline: PipelineResult,
+  opts: { shopId: string; pinnedPresetCode?: string | null },
+): Promise<ResolvedPipelineResult | null> {
+  if (pipeline.verdict !== "NEED_LLM") return null;
+  if (!opts.pinnedPresetCode) return null;
+  if (!referencesPinnedItem(pipeline.cleanText)) return null;
+
+  const preset = await getProductPresetByCode(opts.shopId, opts.pinnedPresetCode);
+  if (!preset) return null;
+
+  const rule = pipeline.result;
+  const result = finalizeIntentResult({
+    intent: "buy",
+    finalScore: Math.max(rule.finalScore, ROUTING.presetOverrideScore),
+    topic: rule.topic,
+    isQuestion: false,
+    matchedReasons: [...rule.matchedReasons, `Sản phẩm đang ghim: ${preset.code}`],
+    productReference: preset.code,
+    parsedData: {
+      productCode: preset.code,
+      color: rule.parsedData?.color ?? preset.color ?? null,
+      size: rule.parsedData?.size ?? null,
+      quantity: rule.parsedData?.quantity ?? null,
+    },
+  });
+
+  return {
+    verdict: "RULE_RESOLVED",
+    intent: "buy",
+    result,
+    hints: { ...pipeline.hints, productCode: preset.code },
+    rawText: pipeline.rawText,
+    cleanText: pipeline.cleanText,
+    context: pipeline.context,
+    resolvedBy: "rule_pinned",
+  };
+}
 
 // ── module config (set 1 lần ở bootstrap) ────────────────────────────────────────────────
 export type CommentScoringConfig = {
@@ -128,7 +175,7 @@ export function scoreCommentText(commentText: string): ScoreCommentResult {
 export async function scoreCommentForShop(
   shopId: string,
   commentText: string,
-  opts: { isHost?: boolean; llmResolver?: LlmIntentResolver | null } = {},
+  opts: { isHost?: boolean; llmResolver?: LlmIntentResolver | null; pinnedPresetCode?: string | null } = {},
 ): Promise<ScoreCommentResult> {
   if (opts.isHost) {
     const pipeline = runCommentPipeline(commentText, { isHost: true, matchedPresetCode: null }, { routingPolicy: config.routingPolicy });
@@ -136,8 +183,16 @@ export async function scoreCommentForShop(
   }
 
   const matchedPreset = await matchPresetByComment(shopId, commentText);
-  const matchedPresetCode = matchedPreset?.code ?? null;
+  let matchedPresetCode = matchedPreset?.code ?? null;
   const pipeline = runCommentPipeline(commentText, { isHost: false, matchedPresetCode }, { routingPolicy: config.routingPolicy });
+
+  // ponytail: thử suy ra từ "sản phẩm đang ghim" TRƯỚC khi gọi LLM — rẻ hơn, và nếu đã đủ chắc
+  // (comment nhắc kiểu "như video/cái này") thì khỏi cần LLM nữa.
+  const pinnedResolved = await resolvePinnedProductReference(pipeline, { shopId, pinnedPresetCode: opts.pinnedPresetCode ?? null });
+  if (pinnedResolved) {
+    matchedPresetCode = pinnedResolved.result.parsedData?.productCode ?? opts.pinnedPresetCode ?? matchedPresetCode;
+    return toScoreCommentResult(pinnedResolved, matchedPresetCode);
+  }
 
   const resolver = opts.llmResolver === undefined ? config.llmResolver : opts.llmResolver;
   const resolved = await resolveWithLlm(pipeline, { resolver, timeoutMs: config.llmTimeoutMs, shopId });

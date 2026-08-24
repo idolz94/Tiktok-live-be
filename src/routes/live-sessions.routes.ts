@@ -6,7 +6,12 @@ import { requireAuth } from "../middlewares/auth.js";
 import { requireUsableAccountContext } from "../services/account.service.js";
 import { listLiveHistory } from "../services/history.service.js";
 import { getLiveSessionReport } from "../services/live-session-insights.service.js";
-import { endLiveSession, startLiveSession } from "../services/live-sessions.service.js";
+import {
+  endLiveSession,
+  getLiveSessionPinnedProduct,
+  setLiveSessionPinnedProduct,
+  startLiveSession,
+} from "../services/live-sessions.service.js";
 import { enqueueLiveEvent } from "../lib/queues.js";
 
 const router = Router();
@@ -19,6 +24,14 @@ const startSchema = z.object({
 
 const metricsParamsSchema = z.object({
   sessionId: z.string().min(1, "Thiếu sessionId."),
+});
+
+const pinnedProductParamsSchema = z.object({
+  sessionId: z.string().min(1, "Thiếu sessionId."),
+});
+
+const pinnedProductBodySchema = z.object({
+  presetId: z.string().min(1).nullable(),
 });
 
 const endSchema = z.object({
@@ -50,6 +63,31 @@ router.get(
     const { sessionId } = metricsParamsSchema.parse(request.params);
     const report = await getLiveSessionReport({ shopId: context.shop.id, sessionId });
     return ok(response, report);
+  }),
+);
+
+router.get(
+  "/:sessionId/pinned-product",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const { sessionId } = pinnedProductParamsSchema.parse(request.params);
+    const result = await getLiveSessionPinnedProduct({ shopId: context.shop.id, liveSessionId: sessionId });
+    return ok(response, result);
+  }),
+);
+
+router.patch(
+  "/:sessionId/pinned-product",
+  asyncHandler(async (request, response) => {
+    const context = await requireUsableAccountContext(request);
+    const { sessionId } = pinnedProductParamsSchema.parse(request.params);
+    const body = pinnedProductBodySchema.parse(request.body || {});
+    const result = await setLiveSessionPinnedProduct({
+      shopId: context.shop.id,
+      liveSessionId: sessionId,
+      presetId: body.presetId,
+    });
+    return ok(response, result);
   }),
 );
 

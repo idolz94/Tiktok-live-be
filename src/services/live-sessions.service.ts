@@ -1,10 +1,11 @@
 import { eq, and, sql } from "drizzle-orm";
 import { db } from "../lib/db.js";
-import { liveSessions, liveComments } from "../db/schema/index.js";
+import { liveSessions, liveComments, shopProductPresets } from "../db/schema/index.js";
 import { calcDurationSeconds, nowIso } from "../utils/date.js";
 import { isUuid } from "../utils/id.js";
 import { normalizeAtUsername } from "../utils/tiktok.js";
 import { assertLiveSessionLimitNotExceeded } from "./license.service.js";
+import { notFound } from "../lib/api-error.js";
 
 export async function findLiveSessionByExternalId({
   shopId,
@@ -413,4 +414,72 @@ export async function getRunningLiveSession({ shopId }: { shopId: string }) {
     .orderBy(liveSessions.startedAt)
     .limit(1);
   return rows[0] ?? null;
+}
+
+
+// ── pinned product (sản phẩm đang giới thiệu trên live) ──────────────────────────────────
+// ponytail: seller ghim 1 preset làm "đang bán" ngay trên UI Live — dùng để suy ra sản phẩm cho
+// comment buy mơ hồ kiểu "như video/cái này" (xem comment-scoring/index.ts). Không bắt buộc
+// phải set; NULL = không ghim gì, hành vi NEED_LLM/rule như cũ.
+export async function setLiveSessionPinnedProduct({
+  shopId,
+  liveSessionId,
+  presetId,
+}: {
+  shopId: string;
+  liveSessionId: string;
+  presetId: string | null;
+}) {
+  if (presetId) {
+    const [preset] = await db
+      .select({ id: shopProductPresets.id })
+      .from(shopProductPresets)
+      .where(and(eq(shopProductPresets.id, presetId), eq(shopProductPresets.shopId, shopId)))
+      .limit(1);
+    if (!preset) throw notFound("Không tìm thấy sản phẩm.");
+  }
+
+  const [updated] = await db
+    .update(liveSessions)
+    .set({ pinnedPresetId: presetId, updatedAt: new Date() })
+    .where(and(eq(liveSessions.id, liveSessionId), eq(liveSessions.shopId, shopId)))
+    .returning({ id: liveSessions.id, pinnedPresetId: liveSessions.pinnedPresetId });
+  if (!updated) throw notFound("Không tìm thấy phiên live.");
+
+  return getLiveSessionPinnedProduct({ shopId, liveSessionId });
+}
+
+export async function getLiveSessionPinnedProduct({
+  shopId,
+  liveSessionId,
+}: {
+  shopId: string;
+  liveSessionId: string;
+}) {
+  const [row] = await db
+    .select({
+      id: shopProductPresets.id,
+      code: shopProductPresets.code,
+      name: shopProductPresets.name,
+      color: shopProductPresets.color,
+      price: shopProductPresets.price,
+    })
+    .from(liveSessions)
+    .innerJoin(shopProductPresets, eq(shopProductPresets.id, liveSessions.pinnedPresetId))
+    .where(and(eq(liveSessions.id, liveSessionId), eq(liveSessions.shopId, shopId)))
+    .limit(1);
+
+  return { pinnedPreset: row ?? null };
+}
+
+// ponytail: dùng ở ingest pipeline (live-comments.service.ts) — chỉ cần code, không cần round-trip
+// qua getLiveSessionPinnedProduct (query nhẹ hơn, chạy trên mọi comment).
+export async function getLiveSessionPinnedPresetCode(liveSessionId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ code: shopProductPresets.code })
+    .from(liveSessions)
+    .innerJoin(shopProductPresets, eq(shopProductPresets.id, liveSessions.pinnedPresetId))
+    .where(eq(liveSessions.id, liveSessionId))
+    .limit(1);
+  return row?.code ?? null;
 }

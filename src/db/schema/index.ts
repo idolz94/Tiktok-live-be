@@ -183,6 +183,9 @@ export const liveSessions = pgTable("live_sessions", {
   customerCount: integer("customer_count").default(0),
   status: text("status").default("running"),
   endReason: text("end_reason"),
+  // ponytail: sản phẩm seller đang giới thiệu trên live — dùng để suy ra sản phẩm cho comment
+  // buy mơ hồ kiểu "như video/cái này" (xem comment-scoring/index.ts resolvePinnedProductReference).
+  pinnedPresetId: uuid("pinned_preset_id").references(() => shopProductPresets.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
